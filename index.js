@@ -5,7 +5,7 @@ const {
 } = require('discord.js');
 const express = require('express');
 
-// ===== 1. SERVER & ENGINE SETUP =====
+// ===== 1. SERVER & ENGINE SETUP =====-
 const app = express();
 app.get('/', (req, res) => res.send('Cybershield is here!: ACTIVE'));
 const webServer = app.listen(process.env.PORT || 3000);
