@@ -21,6 +21,7 @@ app.listen(PORT, () => console.log(`Server running on ${PORT}`));
 
 // ===== TOKEN =====
 const TOKEN = process.env.TOKEN;
+client.login(TOKEN);
 const CLIENT_ID = '1491381996025413764';
 
 if (!TOKEN) {
