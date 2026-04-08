@@ -11,7 +11,7 @@ const {
 
 const fs = require('fs');
 
-// ===== CLIENT (MUST BE FIRST) =====
+// ===== CLIENT =====
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -85,16 +85,14 @@ const rest = new REST({ version: '10' }).setToken(TOKEN);
   }
 })();
 
-// ===== RAID TRACKING =====
+// ===== RAID =====
 let raidMode = false;
 let joins = [];
 
 // ===== INTERACTIONS =====
 client.on('interactionCreate', async interaction => {
-
-  // DROPDOWN
   if (interaction.isStringSelectMenu()) {
-    if (interaction.user.id !== interaction.guild.ownerId)
+    if (!interaction.guild || interaction.user.id !== interaction.guild.ownerId)
       return interaction.reply({ content: 'Owner only', ephemeral: true });
 
     const id = interaction.guild.id;
@@ -123,8 +121,9 @@ client.on('interactionCreate', async interaction => {
     return interaction.reply({ content: `Saved: ${value}`, ephemeral: true });
   }
 
-  // SLASH COMMANDS
   if (interaction.isChatInputCommand()) {
+    if (!interaction.guild) return;
+
     const id = interaction.guild.id;
 
     if (!hasPermission(interaction.member, id)) {
@@ -133,7 +132,7 @@ client.on('interactionCreate', async interaction => {
 
     if (interaction.commandName === 'kick') {
       const user = interaction.options.getUser('user');
-      const member = interaction.guild.members.cache.get(user.id);
+      const member = await interaction.guild.members.fetch(user.id);
 
       await member.kick();
       sendLog(interaction.guild, `${user.tag} kicked`);
@@ -142,7 +141,7 @@ client.on('interactionCreate', async interaction => {
 
     if (interaction.commandName === 'ban') {
       const user = interaction.options.getUser('user');
-      const member = interaction.guild.members.cache.get(user.id);
+      const member = await interaction.guild.members.fetch(user.id);
 
       await member.ban();
       sendLog(interaction.guild, `${user.tag} banned`);
@@ -162,37 +161,11 @@ client.on('interactionCreate', async interaction => {
   }
 });
 
-// ===== ANTI RAID =====
-client.on('guildMemberAdd', member => {
-  const id = member.guild.id;
-
-  if (!data[id]?.raid) return;
-
-  const now = Date.now();
-  joins.push(now);
-
-  joins = joins.filter(t => now - t < 10000);
-
-  if (joins.length > 5) {
-    raidMode = true;
-
-    member.guild.channels.cache.forEach(ch => {
-      if (ch.isTextBased()) {
-        ch.permissionOverwrites.edit(member.guild.roles.everyone, {
-          SendMessages: false
-        });
-      }
-    });
-
-    setTimeout(() => raidMode = false, 300000);
-  }
-});
-
-// ===== ANTI SPAM =====
+// ===== ANTI SPAM (SAFE) =====
 const messages = new Map();
 
 client.on('messageCreate', msg => {
-  if (msg.author.bot || !msg.guild) return;
+  if (!msg.guild || msg.author.bot) return;
 
   const id = msg.guild.id;
   const limit = data[id]?.spam || 5;
@@ -206,26 +179,9 @@ client.on('messageCreate', msg => {
   const recent = times.filter(t => now - t < 5000);
   messages.set(user, recent);
 
-  if (recent.length > limit) {
-    msg.member.timeout(60000);
+  if (recent.length > limit && msg.member) {
+    msg.member.timeout(60000).catch(() => {});
     sendLog(msg.guild, `${msg.author.tag} spammed`);
-  }
-});
-
-// ===== CHANNEL RESTORE =====
-client.on('channelDelete', async channel => {
-  if (!raidMode) return;
-
-  try {
-    await channel.guild.channels.create({
-      name: channel.name,
-      type: channel.type,
-      parent: channel.parentId
-    });
-
-    sendLog(channel.guild, `Channel restored: ${channel.name}`);
-  } catch (e) {
-    console.log(e);
   }
 });
 
@@ -234,5 +190,5 @@ client.once('ready', () => {
   console.log(`Logged in as ${client.user.tag}`);
 });
 
-// ===== LOGIN (LAST LINE) =====
-client.login(TOKEN);
+// ===== LOGIN =====
+client.login(TOKEN).catch(err => console.error(err));
