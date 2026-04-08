@@ -10,11 +10,7 @@ const {
   const express = require('express');
 const app = express();
 
-app.get('/', (req, res) => res.send('Bot is running'));
-app.listen(3000, () => console.log('Server running'));
-} = require('discord.js');
 
-const fs = require('fs');
 
 // ===== TOKEN (FIXED) =====
 const TOKEN = process.env.TOKEN;
