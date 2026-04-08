@@ -99,40 +99,30 @@ client.on('guildMemberAdd', async (member) => {
 
 // ===== 4. COMMANDS & ACTIONS =====
 const commands = [
-    new SlashCommandBuilder().setName('setup').setDescription('Initialize or repair security'),
-    new SlashCommandBuilder().setName('lockdown').setDescription('Freeze channel').addBooleanOption(o => o.setName('on').setRequired(true)),
-    new SlashCommandBuilder().setName('mute').setDescription('Timeout user').addUserOption(o => o.setName('u').setRequired(true)).addIntegerOption(o => o.setName('m').setRequired(true)),
-    new SlashCommandBuilder().setName('unpause').setDescription('Restore invites')
-].map(c => c.toJSON());
-
-client.on('interactionCreate', async (int) => {
-    if (!int.isChatInputCommand()) return;
-    const { commandName, guild, options, member } = int;
+    new SlashCommandBuilder()
+        .setName('setup')
+        .setDescription('Configure the security system')
+        .addStringOption(o => o.setName('mod_role').setDescription('Name of the staff role')),
     
-    // Always run recovery check on command use
-    const { modRole } = await recoverInfrastructure(guild);
-    const isMod = member.permissions.has(PermissionsBitField.Flags.Administrator) || member.roles.cache.has(modRole?.id);
+    new SlashCommandBuilder()
+        .setName('lockdown')
+        .setDescription('Freeze or unfreeze the channel')
+        .addBooleanOption(o => o.setName('status').setDescription('True to lock, False to unlock').setRequired(true)),
+    
+    new SlashCommandBuilder()
+        .setName('mute')
+        .setDescription('Silence a rule-breaker')
+        .addUserOption(o => o.setName('target').setDescription('The user to mute').setRequired(true))
+        .addIntegerOption(o => o.setName('minutes').setDescription('Duration in minutes').setRequired(true)),
 
-    if (commandName === 'setup') {
-        if (!member.permissions.has(PermissionsBitField.Flags.Administrator)) return int.reply("Admins only.");
-        await recoverInfrastructure(guild);
-        return int.reply("✅ **Infrastructure verified.** Log channel and Mod role are active.");
-    }
+    new SlashCommandBuilder()
+        .setName('unpause')
+        .setDescription('Restore server invites after a raid'),
 
-    if (!isMod) return int.reply({ content: "❌ No permission.", ephemeral: true });
-
-    if (commandName === 'lockdown') {
-        await int.channel.permissionOverwrites.edit(guild.id, { SendMessages: !options.getBoolean('on') });
-        return int.reply(`🔒 Lockdown: **${options.getBoolean('on') ? 'ACTIVE' : 'OFF'}**`);
-    }
-
-    if (commandName === 'mute') {
-        const target = options.getMember('u');
-        if (!target.moderatable) return int.reply("I cannot mute this user.");
-        await target.timeout(options.getInteger('m') * 60000);
-        return int.reply(`✅ Silenced **${target.user.tag}**.`);
-    }
-});
+    new SlashCommandBuilder()
+        .setName('stats')
+        .setDescription('Show bot and server security status')
+].map(c => c.toJSON());
 
 // Logging & Message Security
 client.on('messageCreate', async (msg) => {
