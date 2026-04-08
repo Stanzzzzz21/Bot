@@ -3,16 +3,19 @@ const {
   GatewayIntentBits,
   ActionRowBuilder,
   StringSelectMenuBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  EmbedBuilder,
   REST,
   Routes,
   SlashCommandBuilder,
-  ChannelType,
-  PermissionsBitField
+  ChannelType
 } = require('discord.js');
 
 const express = require('express');
 const fs = require('fs');
 
+// ===== EXPRESS KEEP ALIVE =====
 const app = express();
 app.get('/', (req, res) => res.send('Bot is running'));
 app.listen(process.env.PORT || 3000);
@@ -22,7 +25,7 @@ const TOKEN = process.env.TOKEN;
 const CLIENT_ID = '1491381996025413764';
 
 if (!TOKEN) {
-  console.error('TOKEN is missing!');
+  console.error('TOKEN missing');
   process.exit(1);
 }
 
@@ -41,8 +44,22 @@ let data = fs.existsSync('./data.json')
   ? JSON.parse(fs.readFileSync('./data.json'))
   : {};
 
+let backup = fs.existsSync('./backup.json')
+  ? JSON.parse(fs.readFileSync('./backup.json'))
+  : {};
+
 function saveData() {
   fs.writeFileSync('./data.json', JSON.stringify(data, null, 2));
+}
+
+function saveBackup(guild) {
+  backup[guild.id] = guild.channels.cache.map(ch => ({
+    name: ch.name,
+    type: ch.type,
+    parent: ch.parentId
+  }));
+
+  fs.writeFileSync('./backup.json', JSON.stringify(backup, null, 2));
 }
 
 // ===== TRACKERS =====
@@ -62,25 +79,20 @@ function getSettings(id) {
   };
 }
 
-// ===== LOGGING =====
+// ===== LOG =====
 function log(guild, msg) {
   const settings = getSettings(guild.id);
   if (!settings.logChannel) return;
 
-  const channel = guild.channels.cache.get(settings.logChannel);
-  if (!channel) return;
+  const ch = guild.channels.cache.get(settings.logChannel);
+  if (!ch) return;
 
-  channel.send({
-    embeds: [{
-      title: "🛡️ Security Log",
-      description: msg,
-      color: 0x00ffcc,
-      timestamp: new Date()
-    }]
+  ch.send({
+    embeds: [new EmbedBuilder().setTitle("🛡️ Log").setDescription(msg).setColor("Green")]
   }).catch(() => {});
 }
 
-// ===== RAID DETECTION =====
+// ===== TRACK JOIN =====
 function trackJoins(id) {
   const now = Date.now();
   if (!joinTracker[id]) joinTracker[id] = [];
@@ -91,6 +103,7 @@ function trackJoins(id) {
   return joinTracker[id].length;
 }
 
+// ===== TRACK MESSAGES =====
 function trackMessages(userId, guildId) {
   const key = `${guildId}-${userId}`;
   const now = Date.now();
@@ -105,114 +118,26 @@ function trackMessages(userId, guildId) {
 
 // ===== LOCKDOWN =====
 async function lockServer(guild) {
-  guild.channels.cache
-    .filter(c => c.isTextBased())
-    .forEach(ch => {
-      ch.permissionOverwrites.edit(guild.roles.everyone, {
-        SendMessages: false
-      }).catch(() => {});
-    });
+  guild.channels.cache.forEach(ch => {
+    ch.permissionOverwrites.edit(guild.roles.everyone, {
+      SendMessages: false
+    }).catch(() => {});
+  });
 
-  log(guild, '🚨 RAID DETECTED → LOCKED');
+  log(guild, '🚨 RAID → LOCKED');
 
   setTimeout(() => {
-    guild.channels.cache
-      .filter(c => c.isTextBased())
-      .forEach(ch => {
-        ch.permissionOverwrites.edit(guild.roles.everyone, {
-          SendMessages: null
-        }).catch(() => {});
-      });
+    guild.channels.cache.forEach(ch => {
+      ch.permissionOverwrites.edit(guild.roles.everyone, {
+        SendMessages: null
+      }).catch(() => {});
+    });
 
     log(guild, '🔓 UNLOCKED');
   }, 60000);
 }
 
-// ===== EVENTS =====
-client.on('guildMemberAdd', async member => {
-  const id = member.guild.id;
-  const settings = getSettings(id);
-
-  if (!settings.antiraid) return;
-
-  // JOIN RAID CHECK
-  const joins = trackJoins(id);
-
-  if (joins >= settings.raidThreshold) {
-    await lockServer(member.guild);
-  }
-
-  // ACCOUNT AGE FILTER
-  if (Date.now() - member.user.createdTimestamp < settings.minAccountAge) {
-    try {
-      await member.timeout(60000, 'New account detected');
-      log(member.guild, `👶 New account: ${member.user.tag}`);
-    } catch {}
-  }
-});
-
-client.on('messageCreate', async message => {
-  if (!message.guild || message.author.bot) return;
-
-  const settings = getSettings(message.guild.id);
-
-  if (!settings.antiraid) return;
-
-  const count = trackMessages(message.author.id, message.guild.id);
-
-  if (count >= settings.spamThreshold) {
-    try {
-      await message.delete();
-      await message.member.timeout(60000, 'Spam detected');
-      log(message.guild, `🚫 Spam: ${message.author.tag}`);
-    } catch {}
-  }
-});
-
-// ===== COMMANDS =====
-const commands = [
-  new SlashCommandBuilder().setName('dashboard').setDescription('Setup bot')
-];
-
-const rest = new REST({ version: '10' }).setToken(TOKEN);
-
-(async () => {
-  await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
-  console.log('Commands registered');
-})();
-
-// ===== DASHBOARD =====
-client.on('interactionCreate', async interaction => {
-  if (!interaction.isChatInputCommand()) return;
-
-  if (interaction.commandName === 'dashboard') {
-    if (interaction.guild.ownerId !== interaction.user.id) {
-      return interaction.reply({ content: '❌ Owner only', ephemeral: true });
-    }
-
-    const menu = new StringSelectMenuBuilder()
-      .setCustomId('setup')
-      .setPlaceholder('⚙️ Setup')
-      .addOptions([
-        { label: 'Enable Anti-Raid', value: 'on' },
-        { label: 'Disable Anti-Raid', value: 'off' },
-        { label: 'Set Logs Channel', value: 'logs' },
-        { label: 'Set Raid Limit', value: 'raid' },
-        { label: 'Set Spam Limit', value: 'spam' },
-        { label: 'Set Account Age (days)', value: 'age' }
-      ]);
-
-    await interaction.reply({
-      content: '⚙️ Setup Panel',
-      components: [new ActionRowBuilder().addComponents(menu)],
-      ephemeral: true
-    });
-  }
-});
-
-
-//=======restore system 
-
+// ===== RESTORE =====
 async function restoreGuild(guild) {
   const data = backup[guild.id];
   if (!data) return;
@@ -226,171 +151,186 @@ async function restoreGuild(guild) {
   }
 }
 
-//=====anti nuke 
-
+// ===== ANTI-NUKE =====
 const auditTracker = {};
-
-async function checkNuke(guild) {
-  const logs = await guild.fetchAuditLogs({ limit: 5 });
-  const entry = logs.entries.first();
-
-  if (!entry) return;
-
-  const executor = entry.executor.id;
-
-  if (!auditTracker[executor]) auditTracker[executor] = 0;
-
-  auditTracker[executor]++;
-
-  if (auditTracker[executor] > 3) {
-    // LOCK SERVER
-    guild.channels.cache.forEach(ch => {
-      ch.permissionOverwrites.edit(guild.roles.everyone, {
-        SendMessages: false
-      }).catch(() => {});
-    });
-
-    console.log("NUKE DETECTED");
-  }
-}
-
-
-//====quarantine 
-
-async function quarantine(member) {
-  let role = member.guild.roles.cache.find(r => r.name === 'Quarantine');
-
-  if (!role) {
-    role = await member.guild.roles.create({
-      name: 'Quarantine',
-      permissions: []
-    });
-  }
-
-  await member.roles.set([role]).catch(() => {});
-}
-
-//=====backup auto 
 
 client.on('channelDelete', async channel => {
   if (!channel.guild) return;
 
   saveBackup(channel.guild);
-  console.log("Backup saved");
+
+  const logs = await channel.guild.fetchAuditLogs({ limit: 1 });
+  const entry = logs.entries.first();
+
+  if (!entry) return;
+
+  const user = entry.executor.id;
+
+  auditTracker[user] = (auditTracker[user] || 0) + 1;
+
+  if (auditTracker[user] > 3) {
+    await lockServer(channel.guild);
+  }
 });
 
-client.on('channelCreate', async channel => {
-  if (!channel.guild) return;
+// ===== EVENTS =====
+client.on('guildMemberAdd', async member => {
+  const id = member.guild.id;
+  const settings = getSettings(id);
 
-  saveBackup(channel.guild);
+  if (!settings.antiraid) return;
+
+  if (trackJoins(id) >= settings.raidThreshold) {
+    await lockServer(member.guild);
+  }
+
+  if (Date.now() - member.user.createdTimestamp < settings.minAccountAge) {
+    try {
+      await member.timeout(60000);
+      log(member.guild, `👶 New account: ${member.user.tag}`);
+    } catch {}
+  }
 });
 
+client.on('messageCreate', async message => {
+  if (!message.guild || message.author.bot) return;
 
+  const settings = getSettings(message.guild.id);
 
-// ===== MENU HANDLER =====
+  if (trackMessages(message.author.id, message.guild.id) >= settings.spamThreshold) {
+    try {
+      await message.delete();
+      await message.member.timeout(60000);
+      log(message.guild, `🚫 Spam: ${message.author.tag}`);
+    } catch {}
+  }
+});
+
+// ===== COMMANDS =====
+const commands = [
+  new SlashCommandBuilder().setName('dashboard').setDescription('Dashboard'),
+  new SlashCommandBuilder().setName('setup').setDescription('Setup wizard')
+];
+
+const rest = new REST({ version: '10' }).setToken(TOKEN);
+
+(async () => {
+  await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
+})();
+
+// ===== DASHBOARD =====
 client.on('interactionCreate', async interaction => {
-  if (!interaction.isStringSelectMenu()) return;
 
-  const id = interaction.guild.id;
+  // ===== COMMANDS =====
+  if (interaction.isChatInputCommand()) {
 
-  if (interaction.user.id !== interaction.guild.ownerId) {
-    return interaction.reply({ content: '❌ Owner only', ephemeral: true });
+    if (interaction.commandName === 'dashboard') {
+
+      if (interaction.user.id !== interaction.guild.ownerId) {
+        return interaction.reply({ content: '❌ Owner only', ephemeral: true });
+      }
+
+      const menu = new StringSelectMenuBuilder()
+        .setCustomId('menu')
+        .setPlaceholder('⚙️ Select')
+        .addOptions([
+          { label: 'Enable Anti-Raid', value: 'on' },
+          { label: 'Disable Anti-Raid', value: 'off' },
+          { label: 'Create Logs Channel', value: 'logs' },
+          { label: 'Backup', value: 'backup' },
+          { label: 'Restore', value: 'restore' }
+        ]);
+
+      return interaction.reply({
+        content: '⚙️ Dashboard',
+        components: [new ActionRowBuilder().addComponents(menu)],
+        ephemeral: true
+      });
+    }
+
+    if (interaction.commandName === 'setup') {
+
+      const embed = new EmbedBuilder()
+        .setTitle('🛡️ Setup')
+        .setDescription('Enable Anti-Raid?');
+
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId('setup_yes').setLabel('Yes').setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId('setup_no').setLabel('No').setStyle(ButtonStyle.Danger)
+      );
+
+      return interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
+    }
   }
 
-  if (!data[id]) data[id] = {};
+  // ===== MENU =====
+  if (interaction.isStringSelectMenu()) {
 
-  const value = interaction.values[0];
+    const id = interaction.guild.id;
+    if (!data[id]) data[id] = {};
 
-  if (value === 'on') data[id].antiraid = true;
-  if (value === 'off') data[id].antiraid = false;
+    const value = interaction.values[0];
 
-  if (value === 'logs') {
-    const ch = await interaction.guild.channels.create({
-      name: 'bot-logs',
-      type: ChannelType.GuildText
-    });
+    if (value === 'on') data[id].antiraid = true;
+    if (value === 'off') data[id].antiraid = false;
 
-    data[id].logChannel = ch.id;
+    if (value === 'logs') {
+      const ch = await interaction.guild.channels.create({
+        name: 'bot-logs',
+        type: ChannelType.GuildText
+      });
+
+      data[id].logChannel = ch.id;
+    }
+
+    if (value === 'backup') saveBackup(interaction.guild);
+
+    if (value === 'restore') await restoreGuild(interaction.guild);
+
+    saveData();
+
+    return interaction.reply({ content: '✅ Updated', ephemeral: true });
   }
 
-  if (value === 'raid') {
-    data[id].waitingRaid = true;
-    return interaction.reply({ content: 'Send raid limit number', ephemeral: true });
+  // ===== SETUP BUTTONS =====
+  if (interaction.isButton()) {
+
+    const id = interaction.guild.id;
+    if (!data[id]) data[id] = {};
+
+    if (interaction.customId === 'setup_yes') {
+      data[id].antiraid = true;
+
+      const embed = new EmbedBuilder()
+        .setDescription('Send spam limit number in chat');
+
+      await interaction.reply({ embeds: [embed], ephemeral: true });
+
+      const filter = m => m.author.id === interaction.user.id;
+
+      const collector = interaction.channel.createMessageCollector({ filter, max: 1 });
+
+      collector.on('collect', msg => {
+        const num = parseInt(msg.content);
+
+        if (!isNaN(num)) {
+          data[id].spamThreshold = num;
+          saveData();
+          msg.reply('✅ Setup complete');
+        }
+      });
+    }
+
+    if (interaction.customId === 'setup_no') {
+      data[id].antiraid = false;
+      saveData();
+      return interaction.reply({ content: '❌ Disabled', ephemeral: true });
+    }
   }
-
-  if (value === 'spam') {
-    data[id].waitingSpam = true;
-    return interaction.reply({ content: 'Send spam limit number', ephemeral: true });
-  }
-
-  if (value === 'age') {
-    data[id].waitingAge = true;
-    return interaction.reply({ content: 'Send account age (days)', ephemeral: true });
-  }
-
-  { label: 'Create Backup', value: 'backup' },
-{ label: 'Restore Backup', value: 'restore' },
-{ label: 'Enable Anti-Nuke', value: 'nuke_on' }
-
-  saveData();
-  interaction.reply({ content: '✅ Updated', ephemeral: true });
 });
 
-// ===== INPUT HANDLER =====
-client.on('messageCreate', message => {
-  if (message.author.bot) return;
-
-  const id = message.guild?.id;
-  if (!id) return;
-
-  if (data[id]?.waitingRaid) {
-    const num = parseInt(message.content);
-    if (!isNaN(num)) {
-      data[id].raidThreshold = num;
-      data[id].waitingRaid = false;
-      saveData();
-      message.reply(`✅ Raid limit set`);
-    }
-  }
-
-  if (data[id]?.waitingSpam) {
-    const num = parseInt(message.content);
-    if (!isNaN(num)) {
-      data[id].spamThreshold = num;
-      data[id].waitingSpam = false;
-      saveData();
-      message.reply(`✅ Spam limit set`);
-    }
-  }
-
-  if (data[id]?.waitingAge) {
-    const num = parseInt(message.content);
-    if (!isNaN(num)) {
-      data[id].minAccountAge = num * 24 * 60 * 60 * 1000;
-      data[id].waitingAge = false;
-      saveData();
-      message.reply(`✅ Account age set`);
-    }
-  }
-});
-
-// ===== READY =====
 client.once('ready', () => {
   console.log(`Logged in as ${client.user.tag}`);
 });
-
-if (value === 'backup') {
-  saveBackup(interaction.guild);
-  return interaction.reply({ content: '✅ Backup saved', ephemeral: true });
-}
-
-if (value === 'restore') {
-  await restoreGuild(interaction.guild);
-  return interaction.reply({ content: '🔁 Restored', ephemeral: true });
-}
-
-if (value === 'nuke_on') {
-  data[id].antinuke = true;
-}
 
 client.login(TOKEN);
