@@ -5,6 +5,18 @@ const {
 } = require('discord.js');
 const express = require('express');
 
+const express = require('express');
+const app = express();
+const port = 3000;
+
+app.get('/', (req, res) => {
+  res.send('CyberShield is Pulse-Active 🛡️');
+});
+
+app.listen(port, () => {
+  console.log(`Keep-Alive server running on port ${port}`);
+});
+
 const app = express();
 app.get('/', (req, res) => res.send('CyberShield: Complete Edition 🛡️'));
 app.listen(process.env.PORT || 3000);
