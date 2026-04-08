@@ -6,21 +6,18 @@ const {
   REST,
   Routes,
   SlashCommandBuilder,
-  PermissionsBitField,
-  ChannelType
+  ChannelType,
+  PermissionsBitField
 } = require('discord.js');
 
 const express = require('express');
 const fs = require('fs');
 
 const app = express();
-
-// ===== EXPRESS =====
 app.get('/', (req, res) => res.send('Bot is running'));
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on ${PORT}`));
+app.listen(process.env.PORT || 3000);
 
-// ===== TOKEN =====
+// ===== CONFIG =====
 const TOKEN = process.env.TOKEN;
 const CLIENT_ID = '1491381996025413764';
 
@@ -48,55 +45,133 @@ function saveData() {
   fs.writeFileSync('./data.json', JSON.stringify(data, null, 2));
 }
 
-// ===== RAID TRACKER =====
+// ===== TRACKERS =====
 let joinTracker = {};
+let messageTracker = {};
 
-function checkRaid(guildId) {
-  if (!joinTracker[guildId]) joinTracker[guildId] = [];
+// ===== SETTINGS =====
+function getSettings(id) {
+  if (!data[id]) data[id] = {};
 
-  const now = Date.now();
-  joinTracker[guildId].push(now);
-
-  // keep last 10 seconds only
-  joinTracker[guildId] = joinTracker[guildId].filter(t => now - t < 10000);
-
-  return joinTracker[guildId].length;
+  return {
+    raidThreshold: data[id].raidThreshold || 5,
+    spamThreshold: data[id].spamThreshold || 8,
+    minAccountAge: data[id].minAccountAge || 3 * 24 * 60 * 60 * 1000,
+    logChannel: data[id].logChannel || null,
+    antiraid: data[id].antiraid ?? true
+  };
 }
 
-// ===== HELPERS =====
-function isOwner(interaction) {
-  return interaction.guild.ownerId === interaction.user.id;
-}
+// ===== LOGGING =====
+function log(guild, msg) {
+  const settings = getSettings(guild.id);
+  if (!settings.logChannel) return;
 
-function sendLog(guild, message) {
-  const id = guild.id;
-  if (!data[id]?.logChannel) return;
-
-  const channel = guild.channels.cache.get(data[id].logChannel);
+  const channel = guild.channels.cache.get(settings.logChannel);
   if (!channel) return;
 
-  channel.send(`📊 ${message}`).catch(() => {});
+  channel.send({
+    embeds: [{
+      title: "🛡️ Security Log",
+      description: msg,
+      color: 0x00ffcc,
+      timestamp: new Date()
+    }]
+  }).catch(() => {});
 }
 
-// ===== PERMISSIONS =====
-function hasPermission(member, guildId, command) {
-  const perms = data[guildId]?.permissions || {};
+// ===== RAID DETECTION =====
+function trackJoins(id) {
+  const now = Date.now();
+  if (!joinTracker[id]) joinTracker[id] = [];
 
-  if (command === 'ban' || command === 'kick') return true;
+  joinTracker[id].push(now);
+  joinTracker[id] = joinTracker[id].filter(t => now - t < 10000);
 
-  const allowedRoles = perms[command] || [];
-  return allowedRoles.some(roleId => member.roles.cache.has(roleId));
+  return joinTracker[id].length;
 }
+
+function trackMessages(userId, guildId) {
+  const key = `${guildId}-${userId}`;
+  const now = Date.now();
+
+  if (!messageTracker[key]) messageTracker[key] = [];
+
+  messageTracker[key].push(now);
+  messageTracker[key] = messageTracker[key].filter(t => now - t < 2000);
+
+  return messageTracker[key].length;
+}
+
+// ===== LOCKDOWN =====
+async function lockServer(guild) {
+  guild.channels.cache
+    .filter(c => c.isTextBased())
+    .forEach(ch => {
+      ch.permissionOverwrites.edit(guild.roles.everyone, {
+        SendMessages: false
+      }).catch(() => {});
+    });
+
+  log(guild, '🚨 RAID DETECTED → LOCKED');
+
+  setTimeout(() => {
+    guild.channels.cache
+      .filter(c => c.isTextBased())
+      .forEach(ch => {
+        ch.permissionOverwrites.edit(guild.roles.everyone, {
+          SendMessages: null
+        }).catch(() => {});
+      });
+
+    log(guild, '🔓 UNLOCKED');
+  }, 60000);
+}
+
+// ===== EVENTS =====
+client.on('guildMemberAdd', async member => {
+  const id = member.guild.id;
+  const settings = getSettings(id);
+
+  if (!settings.antiraid) return;
+
+  // JOIN RAID CHECK
+  const joins = trackJoins(id);
+
+  if (joins >= settings.raidThreshold) {
+    await lockServer(member.guild);
+  }
+
+  // ACCOUNT AGE FILTER
+  if (Date.now() - member.user.createdTimestamp < settings.minAccountAge) {
+    try {
+      await member.timeout(60000, 'New account detected');
+      log(member.guild, `👶 New account: ${member.user.tag}`);
+    } catch {}
+  }
+});
+
+client.on('messageCreate', async message => {
+  if (!message.guild || message.author.bot) return;
+
+  const settings = getSettings(message.guild.id);
+
+  if (!settings.antiraid) return;
+
+  const count = trackMessages(message.author.id, message.guild.id);
+
+  if (count >= settings.spamThreshold) {
+    try {
+      await message.delete();
+      await message.member.timeout(60000, 'Spam detected');
+      log(message.guild, `🚫 Spam: ${message.author.tag}`);
+    } catch {}
+  }
+});
 
 // ===== COMMANDS =====
 const commands = [
-  new SlashCommandBuilder().setName('kick').setDescription('Kick user')
-    .addUserOption(o => o.setName('user').setDescription('User').setRequired(true)),
-
-  new SlashCommandBuilder().setName('ban').setDescription('Ban user')
-    .addUserOption(o => o.setName('user').setDescription('User').setRequired(true)),
-
-  new SlashCommandBuilder().setName('dashboard').setDescription('Setup dashboard')
+  new SlashCommandBuilder().setName('dashboard').setDescription('Setup bot')
 ];
 
 const rest = new REST({ version: '10' }).setToken(TOKEN);
@@ -106,165 +181,196 @@ const rest = new REST({ version: '10' }).setToken(TOKEN);
   console.log('Commands registered');
 })();
 
-// ===== BOT JOIN =====
-client.on('guildCreate', guild => {
-  if (!guild.systemChannel) return;
-  guild.systemChannel.send('🛡️ Bot installed! Use /dashboard to configure me.');
-});
-
-// ===== JOIN + ANTI RAID =====
-client.on('guildMemberAdd', async member => {
-  const id = member.guild.id;
-
-  if (!data[id]) data[id] = {};
-
-  // RAID CHECK
-  if (data[id].antiraid) {
-    const count = checkRaid(id);
-    const threshold = data[id].raidThreshold || 5;
-
-    if (count >= threshold) {
-
-      // LOCK SERVER
-      member.guild.channels.cache.forEach(ch => {
-        ch.permissionOverwrites.edit(member.guild.roles.everyone, {
-          SendMessages: false
-        }).catch(() => {});
-      });
-
-      sendLog(member.guild, '🚨 RAID DETECTED — Server locked');
-
-      return;
-    }
-  }
-
-  // WELCOME
-  if (data[id]?.welcome && data[id]?.welcomeChannel) {
-    const channel = member.guild.channels.cache.get(data[id].welcomeChannel);
-    if (channel) channel.send(`👋 Welcome ${member.user.tag}`);
-  }
-});
-
-// ===== INTERACTIONS =====
+// ===== DASHBOARD =====
 client.on('interactionCreate', async interaction => {
+  if (!interaction.isChatInputCommand()) return;
 
-  const id = interaction.guild?.id;
-  if (!id) return;
-
-  // ===== DASHBOARD =====
-  if (interaction.isChatInputCommand() && interaction.commandName === 'dashboard') {
-    if (!isOwner(interaction)) {
-      return interaction.reply({ content: '❌ Only owner', ephemeral: true });
+  if (interaction.commandName === 'dashboard') {
+    if (interaction.guild.ownerId !== interaction.user.id) {
+      return interaction.reply({ content: '❌ Owner only', ephemeral: true });
     }
 
     const menu = new StringSelectMenuBuilder()
-      .setCustomId('dashboard')
+      .setCustomId('setup')
       .setPlaceholder('⚙️ Setup')
       .addOptions([
-        { label: 'Welcome ON', value: 'welcome_on' },
-        { label: 'Welcome OFF', value: 'welcome_off' },
-        { label: 'Enable Anti-Raid', value: 'raid_on' },
-        { label: 'Disable Anti-Raid', value: 'raid_off' },
-        { label: 'Create Logs Channel', value: 'create_logs' },
-        { label: 'Set Raid Threshold', value: 'set_threshold' }
+        { label: 'Enable Anti-Raid', value: 'on' },
+        { label: 'Disable Anti-Raid', value: 'off' },
+        { label: 'Set Logs Channel', value: 'logs' },
+        { label: 'Set Raid Limit', value: 'raid' },
+        { label: 'Set Spam Limit', value: 'spam' },
+        { label: 'Set Account Age (days)', value: 'age' }
       ]);
 
-    return interaction.reply({
-      content: '⚙️ **Setup Panel**',
+    await interaction.reply({
+      content: '⚙️ Setup Panel',
       components: [new ActionRowBuilder().addComponents(menu)],
       ephemeral: true
     });
   }
-
-  // ===== MENU =====
-  if (interaction.isStringSelectMenu()) {
-
-    if (!isOwner(interaction)) {
-      return interaction.reply({ content: '❌ Owner only', ephemeral: true });
-    }
-
-    const value = interaction.values[0];
-
-    if (!data[id]) data[id] = {};
-    if (!data[id].permissions) data[id].permissions = {};
-
-    if (value === 'welcome_on') data[id].welcome = true;
-    if (value === 'welcome_off') data[id].welcome = false;
-
-    if (value === 'raid_on') data[id].antiraid = true;
-    if (value === 'raid_off') data[id].antiraid = false;
-
-    if (value === 'create_logs') {
-      const channel = await interaction.guild.channels.create({
-        name: 'bot-logs',
-        type: ChannelType.GuildText
-      });
-
-      data[id].logChannel = channel.id;
-      data[id].logs = true;
-    }
-
-    if (value === 'set_threshold') {
-      data[id].waitingThreshold = true;
-
-      return interaction.reply({
-        content: '📩 Send raid threshold number',
-        ephemeral: true
-      });
-    }
-
-    saveData();
-
-    return interaction.reply({ content: '✅ Updated', ephemeral: true });
-  }
-
-  // ===== COMMANDS =====
-  if (interaction.isChatInputCommand()) {
-
-    if (!hasPermission(interaction.member, id, interaction.commandName)) {
-      return interaction.reply({ content: '❌ No permission', ephemeral: true });
-    }
-
-    if (interaction.commandName === 'kick') {
-      const user = interaction.options.getUser('user');
-      const member = await interaction.guild.members.fetch(user.id);
-
-      await member.kick();
-      sendLog(interaction.guild, `${user.tag} kicked`);
-
-      return interaction.reply(`Kicked ${user.tag}`);
-    }
-
-    if (interaction.commandName === 'ban') {
-      const user = interaction.options.getUser('user');
-      const member = await interaction.guild.members.fetch(user.id);
-
-      await member.ban();
-      sendLog(interaction.guild, `${user.tag} banned`);
-
-      return interaction.reply(`Banned ${user.tag}`);
-    }
-  }
 });
 
-// ===== THRESHOLD INPUT =====
+
+//=======restore system 
+
+async function restoreGuild(guild) {
+  const data = backup[guild.id];
+  if (!data) return;
+
+  for (const ch of data) {
+    await guild.channels.create({
+      name: ch.name,
+      type: ch.type,
+      parent: ch.parent
+    }).catch(() => {});
+  }
+}
+
+//=====anti nuke 
+
+const auditTracker = {};
+
+async function checkNuke(guild) {
+  const logs = await guild.fetchAuditLogs({ limit: 5 });
+  const entry = logs.entries.first();
+
+  if (!entry) return;
+
+  const executor = entry.executor.id;
+
+  if (!auditTracker[executor]) auditTracker[executor] = 0;
+
+  auditTracker[executor]++;
+
+  if (auditTracker[executor] > 3) {
+    // LOCK SERVER
+    guild.channels.cache.forEach(ch => {
+      ch.permissionOverwrites.edit(guild.roles.everyone, {
+        SendMessages: false
+      }).catch(() => {});
+    });
+
+    console.log("NUKE DETECTED");
+  }
+}
+
+
+//====quarantine 
+
+async function quarantine(member) {
+  let role = member.guild.roles.cache.find(r => r.name === 'Quarantine');
+
+  if (!role) {
+    role = await member.guild.roles.create({
+      name: 'Quarantine',
+      permissions: []
+    });
+  }
+
+  await member.roles.set([role]).catch(() => {});
+}
+
+//=====backup auto 
+
+client.on('channelDelete', async channel => {
+  if (!channel.guild) return;
+
+  saveBackup(channel.guild);
+  console.log("Backup saved");
+});
+
+client.on('channelCreate', async channel => {
+  if (!channel.guild) return;
+
+  saveBackup(channel.guild);
+});
+
+
+
+// ===== MENU HANDLER =====
+client.on('interactionCreate', async interaction => {
+  if (!interaction.isStringSelectMenu()) return;
+
+  const id = interaction.guild.id;
+
+  if (interaction.user.id !== interaction.guild.ownerId) {
+    return interaction.reply({ content: '❌ Owner only', ephemeral: true });
+  }
+
+  if (!data[id]) data[id] = {};
+
+  const value = interaction.values[0];
+
+  if (value === 'on') data[id].antiraid = true;
+  if (value === 'off') data[id].antiraid = false;
+
+  if (value === 'logs') {
+    const ch = await interaction.guild.channels.create({
+      name: 'bot-logs',
+      type: ChannelType.GuildText
+    });
+
+    data[id].logChannel = ch.id;
+  }
+
+  if (value === 'raid') {
+    data[id].waitingRaid = true;
+    return interaction.reply({ content: 'Send raid limit number', ephemeral: true });
+  }
+
+  if (value === 'spam') {
+    data[id].waitingSpam = true;
+    return interaction.reply({ content: 'Send spam limit number', ephemeral: true });
+  }
+
+  if (value === 'age') {
+    data[id].waitingAge = true;
+    return interaction.reply({ content: 'Send account age (days)', ephemeral: true });
+  }
+
+  { label: 'Create Backup', value: 'backup' },
+{ label: 'Restore Backup', value: 'restore' },
+{ label: 'Enable Anti-Nuke', value: 'nuke_on' }
+
+  saveData();
+  interaction.reply({ content: '✅ Updated', ephemeral: true });
+});
+
+// ===== INPUT HANDLER =====
 client.on('messageCreate', message => {
   if (message.author.bot) return;
 
   const id = message.guild?.id;
   if (!id) return;
 
-  if (data[id]?.waitingThreshold) {
+  if (data[id]?.waitingRaid) {
     const num = parseInt(message.content);
+    if (!isNaN(num)) {
+      data[id].raidThreshold = num;
+      data[id].waitingRaid = false;
+      saveData();
+      message.reply(`✅ Raid limit set`);
+    }
+  }
 
-    if (isNaN(num)) return message.reply('❌ Number only');
+  if (data[id]?.waitingSpam) {
+    const num = parseInt(message.content);
+    if (!isNaN(num)) {
+      data[id].spamThreshold = num;
+      data[id].waitingSpam = false;
+      saveData();
+      message.reply(`✅ Spam limit set`);
+    }
+  }
 
-    data[id].raidThreshold = num;
-    data[id].waitingThreshold = false;
-
-    saveData();
-
-    message.reply(`✅ Threshold set to ${num}`);
+  if (data[id]?.waitingAge) {
+    const num = parseInt(message.content);
+    if (!isNaN(num)) {
+      data[id].minAccountAge = num * 24 * 60 * 60 * 1000;
+      data[id].waitingAge = false;
+      saveData();
+      message.reply(`✅ Account age set`);
+    }
   }
 });
 
@@ -273,5 +379,18 @@ client.once('ready', () => {
   console.log(`Logged in as ${client.user.tag}`);
 });
 
-// ===== LOGIN =====
+if (value === 'backup') {
+  saveBackup(interaction.guild);
+  return interaction.reply({ content: '✅ Backup saved', ephemeral: true });
+}
+
+if (value === 'restore') {
+  await restoreGuild(interaction.guild);
+  return interaction.reply({ content: '🔁 Restored', ephemeral: true });
+}
+
+if (value === 'nuke_on') {
+  data[id].antinuke = true;
+}
+
 client.login(TOKEN);
