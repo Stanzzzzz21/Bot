@@ -1,14 +1,14 @@
 const { 
     Client, GatewayIntentBits, EmbedBuilder, REST, Routes, 
     SlashCommandBuilder, ChannelType, PermissionsBitField, 
-    Collection, Partials, AuditLogEvent 
+    Collection, Partials 
 } = require('discord.js');
 const express = require('express');
 
-// ===== 1. CORE ENGINE =====
+// ===== 1. RENDER STABILITY =====
 const app = express();
-app.get('/', (req, res) => res.send('Cybershield: ULTIMATE EDITION 🛡️'));
-app.listen(process.env.PORT || 3000);
+app.get('/', (req, res) => res.send('Shield Active 🛡️'));
+app.listen(process.env.PORT || 3000, '0.0.0.0');
 
 const client = new Client({
     intents: [
@@ -21,157 +21,140 @@ const client = new Client({
     partials: [Partials.Message, Partials.Channel, Partials.GuildMember]
 });
 
-const db = new Collection(); 
+const db = new Collection();
 const antiSpamCache = new Collection();
-const CLIENT_ID = '1491381996025413764'; 
+const joinBurstCache = []; 
 const TOKEN = process.env.TOKEN;
+const CLIENT_ID = '1491381996025413764';
 
-// Smart Channel Recovery
-const getLogChannel = (guild) => {
-    const config = db.get(guild.id);
-    return guild.channels.cache.get(config?.logChannel) || 
-           guild.channels.cache.find(c => c.name === 'shield-logs' && c.type === ChannelType.GuildText);
+// ===== 2. SELF-HEALING RECOVERY LOGIC =====
+const recoverInfrastructure = async (guild) => {
+    let config = db.get(guild.id) || {};
+    
+    // Check if Log Channel still exists
+    let logCh = guild.channels.cache.get(config.logChannel) || 
+                guild.channels.cache.find(c => c.name === 'shield-logs');
+    
+    // Check if Mod Role still exists
+    let modRole = guild.roles.cache.get(config.modRole) || 
+                  guild.roles.cache.find(r => r.name === 'Shield Moderator');
+
+    // Recovery: Re-create if deleted during raid
+    if (!logCh) {
+        logCh = await guild.channels.create({
+            name: 'shield-logs',
+            type: ChannelType.GuildText,
+            permissionOverwrites: [{ id: guild.id, deny: [PermissionsBitField.Flags.ViewChannel] }]
+        }).catch(() => null);
+    }
+
+    if (!modRole) {
+        modRole = await guild.roles.create({
+            name: 'Shield Moderator',
+            color: '#00ff99',
+            reason: 'Self-Healing Recovery'
+        }).catch(() => null);
+    }
+
+    db.set(guild.id, { modRole: modRole?.id, logChannel: logCh?.id });
+    return { logCh, modRole };
 };
 
-// ===== 2. SLASH COMMANDS =====
+// ===== 3. ANTI-RAID & WELCOME =====
+client.on('guildMemberAdd', async (member) => {
+    const { logCh } = await recoverInfrastructure(member.guild);
+    const now = Date.now();
+
+    // Account Age Gate
+    const ageInDays = Math.floor((now - member.user.createdTimestamp) / (1000 * 60 * 60 * 24));
+    if (ageInDays < 2) {
+        await member.kick('Anti-Raid: Account too new.').catch(() => {});
+        if (logCh) logCh.send(`🛡️ **Raid Protection:** Kicked ${member.user.tag} (Account only ${ageInDays} days old).`);
+        return;
+    }
+
+    // Join Burst Sensor
+    joinBurstCache.push(now);
+    while (joinBurstCache.length > 0 && now - joinBurstCache[0] > 10000) joinBurstCache.shift();
+
+    if (joinBurstCache.length > 5) {
+        if (logCh) logCh.send("🚨 **MASS JOIN DETECTED!** I am monitoring the situation. Use `/lockdown` if chat gets overwhelmed.");
+    }
+
+    // HELLO MESSAGE (Instructions for new members/staff)
+    const welcome = new EmbedBuilder()
+        .setTitle("🛡️ Cybershield Active")
+        .setColor("#00ff99")
+        .setDescription(`Welcome to **${member.guild.name}**. This server is protected by Cybershield.`)
+        .addFields(
+            { name: "Spam Protection", value: "Enabled (5 msgs / 5s)", inline: true },
+            { name: "Link Filtering", value: "Invites Blocked", inline: true },
+            { name: "Staff Tools", value: "Use `/lockdown`, `/mute`, and `/unpause`", inline: false }
+        );
+    
+    // Send to a general channel if it exists, otherwise ignore
+    const genCh = member.guild.systemChannel;
+    if (genCh) genCh.send({ content: `Hello ${member}!`, embeds: [welcome] }).catch(() => {});
+});
+
+// ===== 4. COMMANDS & ACTIONS =====
 const commands = [
-    new SlashCommandBuilder().setName('setup').setDescription('Auto-build security & staff roles')
-        .addStringOption(o => o.setName('mod_role').setDescription('Name for your Moderator role'))
-        .addIntegerOption(o => o.setName('limit').setDescription('Spam limit (Default: 5)')),
-    new SlashCommandBuilder().setName('lockdown').setDescription('Freeze/Unfreeze the current channel')
-        .addBooleanOption(o => o.setName('status').setRequired(true).setDescription('True = Locked')),
-    new SlashCommandBuilder().setName('mute').setDescription('Silence a rule-breaker')
-        .addUserOption(o => o.setName('target').setRequired(true))
-        .addIntegerOption(o => o.setName('mins').setRequired(true)),
-    new SlashCommandBuilder().setName('stats').setDescription('Check bot health & server count')
+    new SlashCommandBuilder().setName('setup').setDescription('Initialize or repair security'),
+    new SlashCommandBuilder().setName('lockdown').setDescription('Freeze channel').addBooleanOption(o => o.setName('on').setRequired(true)),
+    new SlashCommandBuilder().setName('mute').setDescription('Timeout user').addUserOption(o => o.setName('u').setRequired(true)).addIntegerOption(o => o.setName('m').setRequired(true)),
+    new SlashCommandBuilder().setName('unpause').setDescription('Restore invites')
 ].map(c => c.toJSON());
 
-const rest = new REST({ version: '10' }).setToken(TOKEN);
-(async () => {
-    try { await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands }); } 
-    catch (e) { console.error("Sync Failure:", e); }
-})();
-
-// ===== 3. AUTO-PROTECTION (Links & Spam) =====
-client.on('messageCreate', async (msg) => {
-    if (!msg.guild || msg.author.bot) return;
-
-    const config = db.get(msg.guild.id);
-    const isStaff = msg.member.permissions.has(PermissionsBitField.Flags.ManageMessages) || 
-                    (config?.modRole && msg.member.roles.cache.has(config.modRole));
-    
-    // Anti-Link (No ads for non-staff)
-    if (msg.content.includes('discord.gg/') && !isStaff) {
-        return msg.delete().catch(() => {});
-    }
-
-    // Anti-Spam Logic
-    const limit = config?.spamLimit || 5;
-    const now = Date.now();
-    const timestamps = antiSpamCache.get(msg.author.id) || [];
-    timestamps.push(now);
-    const filtered = timestamps.filter(t => now - t < 5000);
-    antiSpamCache.set(msg.author.id, filtered);
-
-    if (filtered.length > limit && msg.member.moderatable) {
-        await msg.member.timeout(600000, "Automated Anti-Spam").catch(() => {});
-        await msg.channel.bulkDelete(filtered.length).catch(() => {});
-    }
-});
-
-// ===== 4. ENHANCED LOGGING (Ghost Pings) =====
-client.on('messageDelete', async (message) => {
-    if (!message.guild || message.author?.bot) return;
-    
-    const logCh = getLogChannel(message.guild);
-    if (!logCh) return;
-
-    const embed = new EmbedBuilder()
-        .setTitle(message.mentions.users.size > 0 ? "🚨 Ghost Ping Alert" : "🗑️ Message Deleted")
-        .setColor(message.mentions.users.size > 0 ? "#ff4757" : "#2f3136")
-        .addFields(
-            { name: "User", value: `${message.author?.tag || 'Unknown'}`, inline: true },
-            { name: "Channel", value: `<#${message.channel.id}>`, inline: true },
-            { name: "Content", value: message.content?.slice(0, 1000) || "*(None/Media)*" }
-        ).setTimestamp();
-
-    logCh.send({ embeds: [embed] }).catch(() => {});
-});
-
-// ===== 5. COMMAND HANDLER =====
 client.on('interactionCreate', async (int) => {
     if (!int.isChatInputCommand()) return;
-    const { commandName, options, guild, member } = int;
-    const config = db.get(guild.id);
-    const isAuthorized = member.permissions.has(PermissionsBitField.Flags.Administrator) || 
-                       (config?.modRole && member.roles.cache.has(config.modRole));
+    const { commandName, guild, options, member } = int;
+    
+    // Always run recovery check on command use
+    const { modRole } = await recoverInfrastructure(guild);
+    const isMod = member.permissions.has(PermissionsBitField.Flags.Administrator) || member.roles.cache.has(modRole?.id);
 
     if (commandName === 'setup') {
-        if (!member.permissions.has(PermissionsBitField.Flags.Administrator)) 
-            return int.reply({ content: "❌ Admins only.", ephemeral: true });
-
-        await int.deferReply({ ephemeral: true });
-
-        try {
-            const roleName = options.getString('mod_role') || "Moderator";
-            const role = await guild.roles.create({ name: roleName, color: '#00ff99', reason: 'Bot Setup' });
-            
-            const logs = await guild.channels.create({
-                name: 'shield-logs',
-                type: ChannelType.GuildText,
-                permissionOverwrites: [
-                    { id: guild.id, deny: [PermissionsBitField.Flags.ViewChannel] },
-                    { id: role.id, allow: [PermissionsBitField.Flags.ViewChannel] },
-                    { id: client.user.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] }
-                ]
-            });
-
-            db.set(guild.id, { modRole: role.id, logChannel: logs.id, spamLimit: options.getInteger('limit') || 5 });
-            
-            const embed = new EmbedBuilder()
-                .setTitle("🛡️ System Online")
-                .setColor("#00ff99")
-                .setDescription(`The server is now protected.\n\n**Mod Role:** <@&${role.id}>\n**Logs:** <#${logs.id}>`);
-            
-            return int.editReply({ embeds: [embed] });
-        } catch (err) {
-            console.error(err);
-            return int.editReply("❌ Setup failed. Ensure I have 'Manage Roles' permissions.");
-        }
+        if (!member.permissions.has(PermissionsBitField.Flags.Administrator)) return int.reply("Admins only.");
+        await recoverInfrastructure(guild);
+        return int.reply("✅ **Infrastructure verified.** Log channel and Mod role are active.");
     }
 
+    if (!isMod) return int.reply({ content: "❌ No permission.", ephemeral: true });
+
     if (commandName === 'lockdown') {
-        if (!isAuthorized) return int.reply({ content: "❌ No permission.", ephemeral: true });
-        const status = options.getBoolean('status');
-        await int.channel.permissionOverwrites.edit(guild.id, { SendMessages: !status });
-        return int.reply(`🔒 Lockdown is **${status ? 'ON' : 'OFF'}** for this channel.`);
+        await int.channel.permissionOverwrites.edit(guild.id, { SendMessages: !options.getBoolean('on') });
+        return int.reply(`🔒 Lockdown: **${options.getBoolean('on') ? 'ACTIVE' : 'OFF'}**`);
     }
 
     if (commandName === 'mute') {
-        if (!isAuthorized) return int.reply({ content: "❌ No permission.", ephemeral: true });
-        const target = options.getMember('target');
-        
-        if (!target.moderatable) return int.reply({ content: "❌ I cannot mute this user.", ephemeral: true });
-        
-        await target.timeout(options.getInteger('mins') * 60000, "Staff command");
-        return int.reply(`✅ **${target.user.tag}** muted for ${options.getInteger('mins')} minutes.`);
-    }
-
-    if (commandName === 'stats') {
-        const embed = new EmbedBuilder()
-            .setTitle("📊 System Health")
-            .setColor("#3498db")
-            .addFields(
-                { name: "Active Protection", value: `${client.guilds.cache.size} Servers`, inline: true },
-                { name: "Ping", value: `${client.ws.ping}ms`, inline: true }
-            );
-        return int.reply({ embeds: [embed] });
+        const target = options.getMember('u');
+        if (!target.moderatable) return int.reply("I cannot mute this user.");
+        await target.timeout(options.getInteger('m') * 60000);
+        return int.reply(`✅ Silenced **${target.user.tag}**.`);
     }
 });
 
-// Anti-Crash Listeners
-client.on('error', console.error);
-process.on('unhandledRejection', console.error);
+// Logging & Message Security
+client.on('messageCreate', async (msg) => {
+    if (!msg.guild || msg.author.bot) return;
+    if (msg.content.includes('discord.gg/') && !msg.member.permissions.has(PermissionsBitField.Flags.ManageMessages)) {
+        await msg.delete().catch(() => {});
+    }
+    // Anti-Spam
+    const now = Date.now();
+    const times = antiSpamCache.get(msg.author.id) || [];
+    times.push(now);
+    const recent = times.filter(t => now - t < 5000);
+    antiSpamCache.set(msg.author.id, recent);
+    if (recent.length > 5 && msg.member.moderatable) {
+        await msg.member.timeout(600000, "Spam").catch(() => {});
+    }
+});
 
-client.once('ready', () => console.log(`🚀 ${client.user.tag} IS FULLY OPERATIONAL`));
+client.once('ready', async () => {
+    const rest = new REST({ version: '10' }).setToken(TOKEN);
+    await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
+    console.log(`🚀 System Online: ${client.user.tag}`);
+});
+
 client.login(TOKEN);
