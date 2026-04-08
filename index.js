@@ -5,9 +5,9 @@ const {
 } = require('discord.js');
 const express = require('express');
 
-const express = require('express');
+// --- KEEP ALIVE SYSTEM START ---
 const app = express();
-const port = 3000;
+const port = process.env.PORT || 3000;
 
 app.get('/', (req, res) => {
   res.send('CyberShield is Pulse-Active 🛡️');
@@ -17,13 +17,23 @@ app.listen(port, () => {
   console.log(`Keep-Alive server running on port ${port}`);
 });
 
-const app = express();
-app.get('/', (req, res) => res.send('CyberShield: Complete Edition 🛡️'));
-app.listen(process.env.PORT || 3000);
+// SELF-PING LOGIC (Rings its own doorbell every 1 minute)
+// Note: You must run 'npm install node-fetch' in your Replit shell
+const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
+
+setInterval(() => {
+  // IMPORTANT: Replace the URL below with YOUR Replit Webview URL
+  const myUrl = "https://bot-gyyu.onrender.com"; 
+  
+  fetch(myUrl)
+    .then(() => console.log('🛡️ CyberShield Pulse: OK'))
+    .catch(err => console.log('🛡️ Pulse Failed: Bot is likely asleep. Use an external pinger.'));
+}, 60000); 
+// --- KEEP ALIVE SYSTEM END ---
 
 const client = new Client({ 
     intents: [Object.values(GatewayIntentBits)], 
-    partials: [1, 2, 3] // Message, Channel, GuildMember
+    partials: [1, 2, 3] 
 });
 
 const db = new Collection(); 
