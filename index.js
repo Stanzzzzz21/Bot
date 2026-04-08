@@ -7,7 +7,7 @@ const express = require('express');
 
 // ===== 1. SERVER & ENGINE SETUP =====
 const app = express();
-app.get('/', (req, res) => res.send('🛡️ Shield-Max Ultimate: ACTIVE'));
+app.get('/', (req, res) => res.send('Cybershield is here!: ACTIVE'));
 const webServer = app.listen(process.env.PORT || 3000);
 
 const client = new Client({
@@ -46,19 +46,19 @@ const commands = [
     // Moderation Tools
     new SlashCommandBuilder()
         .setName('ban')
-        .setDescription('🔨 Ban a user')
+        .setDescription(' Ban a user')
         .addUserOption(o => o.setName('target').setRequired(true).setDescription('User to ban'))
         .addStringOption(o => o.setName('reason').setDescription('Reason for ban')),
 
     new SlashCommandBuilder()
         .setName('kick')
-        .setDescription('👢 Kick a user')
+        .setDescription(' Kick a user')
         .addUserOption(o => o.setName('target').setRequired(true).setDescription('User to kick'))
         .addStringOption(o => o.setName('reason').setDescription('Reason for kick')),
 
     new SlashCommandBuilder()
         .setName('mute')
-        .setDescription('🔇 Mute a user (Timeout)')
+        .setDescription(' Mute a user (Timeout)')
         .addUserOption(o => o.setName('target').setRequired(true).setDescription('User to mute'))
         .addIntegerOption(o => o.setName('minutes').setRequired(true).setDescription('Duration in minutes')),
 
@@ -84,9 +84,17 @@ const rest = new REST({ version: '10' }).setToken(TOKEN);
 client.on('guildCreate', async (guild) => {
     const channel = guild.channels.cache.find(c => c.type === ChannelType.GuildText && c.permissionsFor(guild.members.me).has(PermissionsBitField.Flags.SendMessages));
     const welcome = new EmbedBuilder()
-        .setTitle("🛡️ Shield-Max System Online")
+        .setTitle("Cybershield is here!")
         .setColor("#5865f2")
-        .setDescription(`Hello **${guild.name}**! I'm your new security engine.\n\n**Quick Start:**\nRun \`/setup\` to create your **Moderator Role**, **Log Channels**, and **Anti-Spam** settings.`)
+        .setDescription(`Hello **${guild.name}**! I'm your new security system.\n\n**Quick Start:**\nRun \`/setup\` to create your **Moderator Role**, **Log Channels**, and **Anti-Spam** settings. We also inclusde: Anti-Spam: Stops people from sending too many messages too fast.
+
+Anti-Raid: Blocks "bot attacks" by kicking brand-new accounts.
+
+Anti-Nuke: Stops rogue moderators from deleting all your channels.
+
+Auto-Timeout: Automatically silences people who break the rules.
+
+Lockdown: Instantly freezes a channel so nobody can talk during an emergency.`)
         .setTimestamp();
     if (channel) channel.send({ embeds: [welcome] });
 });
@@ -144,14 +152,14 @@ client.on('interactionCreate', async (int) => {
 
         await int.deferReply({ ephemeral: true });
         
-        const modRoleName = options.getString('mod_role_name') || "Shield-Moderator";
+        const modRoleName = options.getString('mod_role_name') || "Security Moderator";
         const sensitivity = options.getInteger('spam_sensitivity') || 5;
 
         // Create Moderator Role
         const role = await guild.roles.create({
             name: modRoleName,
             color: '#2ecc71',
-            reason: 'Shield-Max Setup'
+            reason: 'Setup'
         });
 
         // Create Private Logs
@@ -205,7 +213,7 @@ client.on('interactionCreate', async (int) => {
 
     if (commandName === 'stats') {
         const statsEmbed = new EmbedBuilder()
-            .setTitle("📊 Global Shield-Max Statistics")
+            .setTitle("Statistics")
             .addFields(
                 { name: "Servers Protected", value: `${client.guilds.cache.size}`, inline: true },
                 { name: "Total Users Monitoring", value: `${client.users.cache.size}`, inline: true },
@@ -220,7 +228,7 @@ client.on('interactionCreate', async (int) => {
 process.on('unhandledRejection', error => console.error('Unhandled Promise Rejection:', error));
 
 process.on('SIGINT', () => {
-    console.log('🛑 Shutting down Shield-Max...');
+    console.log('🛑 Shutting down security features...');
     webServer.close(() => {
         client.destroy();
         process.exit(0);
