@@ -11,6 +11,15 @@ const {
 
 const fs = require('fs');
 
+// ===== TOKEN (FIXED) =====
+const TOKEN = process.env.TOKEN;
+const CLIENT_ID = '1491381996025413764';
+
+if (!TOKEN) {
+  console.error('TOKEN is missing!');
+  process.exit(1);
+}
+
 // ===== CLIENT =====
 const client = new Client({
   intents: [
@@ -20,10 +29,6 @@ const client = new Client({
     GatewayIntentBits.MessageContent
   ]
 });
-
-// ===== CONFIG =====
-const TOKEN = process.env.TOKEN;
-const CLIENT_ID = '1491381996025413764';
 
 // ===== DATA =====
 let data = fs.existsSync('./data.json')
@@ -42,7 +47,7 @@ function sendLog(guild, message) {
   const channel = guild.channels.cache.get(data[id].logChannel);
   if (!channel) return;
 
-  channel.send(`📊 ${message}`);
+  channel.send(`📊 ${message}`).catch(() => {});
 }
 
 // ===== PERMISSIONS =====
@@ -81,9 +86,41 @@ const rest = new REST({ version: '10' }).setToken(TOKEN);
     await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
     console.log('Commands registered');
   } catch (err) {
-    console.error(err);
+    console.error('Command deploy error:', err);
   }
 })();
+
+// ===== SETUP DROPDOWN =====
+client.on('guildCreate', async guild => {
+  const channel = guild.systemChannel;
+  if (!channel) return;
+
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId('setup')
+    .setPlaceholder('Setup your bot')
+    .addOptions([
+      { label: 'Spam Limit: 5', value: 'spam_5' },
+      { label: 'Spam Limit: 10', value: 'spam_10' },
+
+      { label: 'Anti-Raid ON', value: 'raid_on' },
+      { label: 'Anti-Raid OFF', value: 'raid_off' },
+
+      { label: 'Logs ON', value: 'logs_on' },
+      { label: 'Logs OFF', value: 'logs_off' },
+
+      { label: 'Commands: Admin', value: 'role_admin' },
+      { label: 'Commands: Mod', value: 'role_mod' },
+      { label: 'Commands: Everyone', value: 'role_all' },
+
+      { label: 'Advanced Protection ON', value: 'adv_on' },
+      { label: 'Advanced Protection OFF', value: 'adv_off' }
+    ]);
+
+  channel.send({
+    content: '🛡️ Setup your bot:',
+    components: [new ActionRowBuilder().addComponents(menu)]
+  }).catch(() => {});
+});
 
 // ===== RAID =====
 let raidMode = false;
@@ -91,8 +128,9 @@ let joins = [];
 
 // ===== INTERACTIONS =====
 client.on('interactionCreate', async interaction => {
+
   if (interaction.isStringSelectMenu()) {
-    if (!interaction.guild || interaction.user.id !== interaction.guild.ownerId)
+    if (interaction.user.id !== interaction.guild.ownerId)
       return interaction.reply({ content: 'Owner only', ephemeral: true });
 
     const id = interaction.guild.id;
@@ -122,8 +160,6 @@ client.on('interactionCreate', async interaction => {
   }
 
   if (interaction.isChatInputCommand()) {
-    if (!interaction.guild) return;
-
     const id = interaction.guild.id;
 
     if (!hasPermission(interaction.member, id)) {
@@ -132,18 +168,22 @@ client.on('interactionCreate', async interaction => {
 
     if (interaction.commandName === 'kick') {
       const user = interaction.options.getUser('user');
-      const member = await interaction.guild.members.fetch(user.id);
 
-      await member.kick();
+      const member = await interaction.guild.members.fetch(user.id).catch(() => null);
+      if (!member) return interaction.reply({ content: 'User not found', ephemeral: true });
+
+      await member.kick().catch(() => {});
       sendLog(interaction.guild, `${user.tag} kicked`);
       return interaction.reply(`Kicked ${user.tag}`);
     }
 
     if (interaction.commandName === 'ban') {
       const user = interaction.options.getUser('user');
-      const member = await interaction.guild.members.fetch(user.id);
 
-      await member.ban();
+      const member = await interaction.guild.members.fetch(user.id).catch(() => null);
+      if (!member) return interaction.reply({ content: 'User not found', ephemeral: true });
+
+      await member.ban().catch(() => {});
       sendLog(interaction.guild, `${user.tag} banned`);
       return interaction.reply(`Banned ${user.tag}`);
     }
@@ -161,11 +201,37 @@ client.on('interactionCreate', async interaction => {
   }
 });
 
-// ===== ANTI SPAM (SAFE) =====
+// ===== ANTI RAID =====
+client.on('guildMemberAdd', member => {
+  const id = member.guild.id;
+
+  if (!data[id]?.raid) return;
+
+  const now = Date.now();
+  joins.push(now);
+
+  joins = joins.filter(t => now - t < 10000);
+
+  if (joins.length > 5) {
+    raidMode = true;
+
+    member.guild.channels.cache.forEach(ch => {
+      if (ch.isTextBased()) {
+        ch.permissionOverwrites.edit(member.guild.roles.everyone, {
+          SendMessages: false
+        }).catch(() => {});
+      }
+    });
+
+    setTimeout(() => raidMode = false, 300000);
+  }
+});
+
+// ===== ANTI SPAM =====
 const messages = new Map();
 
 client.on('messageCreate', msg => {
-  if (!msg.guild || msg.author.bot) return;
+  if (msg.author.bot || !msg.guild) return;
 
   const id = msg.guild.id;
   const limit = data[id]?.spam || 5;
@@ -179,9 +245,26 @@ client.on('messageCreate', msg => {
   const recent = times.filter(t => now - t < 5000);
   messages.set(user, recent);
 
-  if (recent.length > limit && msg.member) {
-    msg.member.timeout(60000).catch(() => {});
+  if (recent.length > limit) {
+    if (msg.member) {
+      msg.member.timeout(60000).catch(() => {});
+    }
+
     sendLog(msg.guild, `${msg.author.tag} spammed`);
+  }
+});
+
+// ===== CHANNEL RESTORE =====
+client.on('channelDelete', async channel => {
+  if (!raidMode) return;
+
+  try {
+    await channel.guild.channels.create({
+      name: channel.name,
+      parent: channel.parentId
+    });
+  } catch (e) {
+    console.log(e);
   }
 });
 
@@ -191,4 +274,4 @@ client.once('ready', () => {
 });
 
 // ===== LOGIN =====
-client.login(TOKEN).catch(err => console.error(err));
+client.login(TOKEN);
