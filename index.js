@@ -11,9 +11,7 @@ const {
 
 const fs = require('fs');
 
-client.login(process.env.TOKEN);
-const CLIENT_ID = '1491381996025413764';
-
+// ===== CLIENT (MUST BE FIRST) =====
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -23,6 +21,11 @@ const client = new Client({
   ]
 });
 
+// ===== CONFIG =====
+const TOKEN = process.env.TOKEN;
+const CLIENT_ID = '1491381996025413764';
+
+// ===== DATA =====
 let data = fs.existsSync('./data.json')
   ? JSON.parse(fs.readFileSync('./data.json'))
   : {};
@@ -74,40 +77,13 @@ const commands = [
 const rest = new REST({ version: '10' }).setToken(TOKEN);
 
 (async () => {
-  await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
+  try {
+    await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
+    console.log('Commands registered');
+  } catch (err) {
+    console.error(err);
+  }
 })();
-
-// ===== SETUP DROPDOWN =====
-client.on('guildCreate', async guild => {
-  const channel = guild.systemChannel;
-  if (!channel) return;
-
-  const menu = new StringSelectMenuBuilder()
-    .setCustomId('setup')
-    .setPlaceholder('Setup your bot')
-    .addOptions([
-      { label: 'Spam Limit: 5', value: 'spam_5' },
-      { label: 'Spam Limit: 10', value: 'spam_10' },
-
-      { label: 'Anti-Raid ON', value: 'raid_on' },
-      { label: 'Anti-Raid OFF', value: 'raid_off' },
-
-      { label: 'Logs ON', value: 'logs_on' },
-      { label: 'Logs OFF', value: 'logs_off' },
-
-      { label: 'Commands: Admin', value: 'role_admin' },
-      { label: 'Commands: Mod', value: 'role_mod' },
-      { label: 'Commands: Everyone', value: 'role_all' },
-
-      { label: 'Advanced Protection ON', value: 'adv_on' },
-      { label: 'Advanced Protection OFF', value: 'adv_off' }
-    ]);
-
-  channel.send({
-    content: '🛡️ Setup your bot:',
-    components: [new ActionRowBuilder().addComponents(menu)]
-  });
-});
 
 // ===== RAID TRACKING =====
 let raidMode = false;
@@ -176,7 +152,9 @@ client.on('interactionCreate', async interaction => {
     if (interaction.commandName === 'setlogs') {
       const channel = interaction.options.getChannel('channel');
 
+      if (!data[id]) data[id] = {};
       data[id].logChannel = channel.id;
+
       saveData();
 
       return interaction.reply(`Log channel set`);
@@ -214,7 +192,7 @@ client.on('guildMemberAdd', member => {
 const messages = new Map();
 
 client.on('messageCreate', msg => {
-  if (msg.author.bot) return;
+  if (msg.author.bot || !msg.guild) return;
 
   const id = msg.guild.id;
   const limit = data[id]?.spam || 5;
@@ -230,7 +208,6 @@ client.on('messageCreate', msg => {
 
   if (recent.length > limit) {
     msg.member.timeout(60000);
-
     sendLog(msg.guild, `${msg.author.tag} spammed`);
   }
 });
@@ -252,8 +229,10 @@ client.on('channelDelete', async channel => {
   }
 });
 
+// ===== READY =====
 client.once('ready', () => {
   console.log(`Logged in as ${client.user.tag}`);
 });
 
+// ===== LOGIN (LAST LINE) =====
 client.login(TOKEN);
