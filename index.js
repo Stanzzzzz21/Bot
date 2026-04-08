@@ -1,361 +1,235 @@
-const {
-  Client,
-  GatewayIntentBits,
-  ActionRowBuilder,
-  StringSelectMenuBuilder,
-  ButtonBuilder,
-  ButtonStyle,
-  EmbedBuilder,
-  REST,
-  Routes,
-  SlashCommandBuilder,
-  ChannelType,
-  PermissionsBitField
+const { 
+    Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, 
+    ButtonStyle, EmbedBuilder, REST, Routes, SlashCommandBuilder, 
+    ChannelType, PermissionsBitField, Collection 
 } = require('discord.js');
-
 const express = require('express');
-const fs = require('fs');
 
-// ===== EXPRESS =====
+// ===== 1. SERVER & ENGINE SETUP =====
 const app = express();
-app.get('/', (req, res) => res.send('Bot is running'));
-app.listen(process.env.PORT || 3000);
+app.get('/', (req, res) => res.send('🛡️ Shield-Max Ultimate: ACTIVE'));
+const webServer = app.listen(process.env.PORT || 3000);
 
-// ===== CONFIG =====
-const TOKEN = process.env.TOKEN;
-const CLIENT_ID = '1491381996025413764';
-
-if (!TOKEN) {
-  console.error('TOKEN missing');
-  process.exit(1);
-}
-
-// ===== FIX: RENDER SAFE FILE PATHS =====
-const DATA_FILE = process.env.NODE_ENV === 'production' ? '/tmp/data.json' : './data.json';
-const BACKUP_FILE = process.env.NODE_ENV === 'production' ? '/tmp/backup.json' : './backup.json';
-
-// ===== CLIENT =====
 const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMembers,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent
-  ]
+    intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMembers,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent,
+        GatewayIntentBits.GuildModeration
+    ]
 });
 
-// ===== DATA =====
-let data = fs.existsSync(DATA_FILE)
-  ? JSON.parse(fs.readFileSync(DATA_FILE))
-  : {};
+// Data persistence (Replace with MongoDB for massive scaling)
+const db = new Collection(); 
+const antiSpamCache = new Collection();
+const antiNukeCache = new Collection();
 
-let backup = fs.existsSync(BACKUP_FILE)
-  ? JSON.parse(fs.readFileSync(BACKUP_FILE))
-  : {};
+const CLIENT_ID = '1491381996025413764'; 
+const TOKEN = process.env.TOKEN;
 
-// ===== SAVE =====
-function saveData() {
-  fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
-}
-function saveBackup() {
-  fs.writeFileSync(BACKUP_FILE, JSON.stringify(backup, null, 2));
-}
-
-// ===== TRACKERS =====
-let joinTracker = {};
-let messageTracker = {};
-let auditTracker = {};
-
-// ===== SETTINGS =====
-function getSettings(id) {
-  if (!data[id]) data[id] = {};
-
-  return {
-    raidThreshold: data[id].raidThreshold || 5,
-    spamThreshold: data[id].spamThreshold || 8,
-    minAccountAge: data[id].minAccountAge || 3 * 24 * 60 * 60 * 1000,
-    logChannel: data[id].logChannel || null,
-    antiraid: data[id].antiraid ?? true
-  };
-}
-
-// ===== LOG =====
-function log(guild, msg) {
-  const settings = getSettings(guild.id);
-  if (!settings.logChannel) return;
-
-  const ch = guild.channels.cache.get(settings.logChannel);
-  if (!ch) return;
-
-  ch.send({
-    embeds: [new EmbedBuilder().setTitle("🛡️ Log").setDescription(msg).setColor("Green")]
-  }).catch(() => {});
-}
-
-// ===== TRACK =====
-function trackJoins(id) {
-  const now = Date.now();
-  if (!joinTracker[id]) joinTracker[id] = [];
-
-  joinTracker[id].push(now);
-  joinTracker[id] = joinTracker[id].filter(t => now - t < 10000);
-
-  return joinTracker[id].length;
-}
-
-function trackMessages(userId, guildId) {
-  const key = `${guildId}-${userId}`;
-  const now = Date.now();
-
-  if (!messageTracker[key]) messageTracker[key] = [];
-
-  messageTracker[key].push(now);
-  messageTracker[key] = messageTracker[key].filter(t => now - t < 2000);
-
-  return messageTracker[key].length;
-}
-
-// ===== LOCK =====
-async function lockServer(guild) {
-
-  // FIX: permission check
-  if (!guild.members.me.permissions.has(PermissionsBitField.Flags.Administrator)) return;
-
-  guild.channels.cache.forEach(ch => {
-    ch.permissionOverwrites.edit(guild.roles.everyone, {
-      SendMessages: false
-    }).catch(() => {});
-  });
-
-  log(guild, "🚨 RAID → LOCKED");
-}
-
-// ===== RESTORE =====
-async function restoreGuild(guild) {
-  const data = backup[guild.id];
-  if (!data) return;
-
-  for (const ch of data) {
-    await guild.channels.create({
-      name: ch.name,
-      type: ChannelType.GuildText, // FIXED
-      parent: ch.parent
-    }).catch(() => {});
-  }
-
-  log(guild, "🔄 RESTORED");
-}
-
-// ===== EVENTS =====
-client.on('guildMemberAdd', async member => {
-  const settings = getSettings(member.guild.id);
-
-  if (!settings.antiraid) return;
-
-  if (trackJoins(member.guild.id) >= settings.raidThreshold) {
-    await lockServer(member.guild);
-  }
-});
-
-client.on('messageCreate', async message => {
-  if (!message.guild || message.author.bot) return;
-
-  const settings = getSettings(message.guild.id);
-
-  if (trackMessages(message.author.id, message.guild.id) >= settings.spamThreshold) {
-    try {
-      await message.delete();
-      await message.member.timeout(60000);
-      log(message.guild, `🚫 Spam: ${message.author.tag}`);
-    } catch {}
-  }
-});
-
-// ===== ANTI-NUKE =====
-client.on('channelDelete', async channel => {
-  if (!channel.guild) return;
-
-  backup[channel.guild.id] = channel.guild.channels.cache.map(ch => ({
-    name: ch.name,
-    parent: ch.parentId
-  }));
-
-  saveBackup();
-
-  const logs = await channel.guild.fetchAuditLogs({ limit: 1 }).catch(() => {});
-  const entry = logs?.entries.first();
-
-  if (!entry) return;
-
-  const user = entry.executor.id;
-
-  auditTracker[user] = (auditTracker[user] || 0) + 1;
-
-  if (auditTracker[user] > 3) {
-    await lockServer(channel.guild);
-  }
-});
-
-// ===== COMMANDS =====
+// ===== 2. GLOBAL COMMAND REGISTRATION =====
 const commands = [
-  new SlashCommandBuilder().setName('dashboard').setDescription('Dashboard'),
-  new SlashCommandBuilder().setName('setup').setDescription('Setup wizard')
-];
+    // Setup Wizard
+    new SlashCommandBuilder()
+        .setName('setup')
+        .setDescription('Configure security, mod roles, and logs')
+        .addStringOption(o => o.setName('mod_role_name').setDescription('Name for your Moderator role'))
+        .addIntegerOption(o => o.setName('spam_sensitivity').setDescription('Messages allowed per 5s (Default: 5)')),
+
+    // Emergency Tools
+    new SlashCommandBuilder()
+        .setName('lockdown')
+        .setDescription('Freeze the current channel')
+        .addBooleanOption(o => o.setName('status').setDescription('True = Locked, False = Unlocked').setRequired(true)),
+
+    // Moderation Tools
+    new SlashCommandBuilder()
+        .setName('ban')
+        .setDescription('🔨 Ban a user')
+        .addUserOption(o => o.setName('target').setRequired(true).setDescription('User to ban'))
+        .addStringOption(o => o.setName('reason').setDescription('Reason for ban')),
+
+    new SlashCommandBuilder()
+        .setName('kick')
+        .setDescription('👢 Kick a user')
+        .addUserOption(o => o.setName('target').setRequired(true).setDescription('User to kick'))
+        .addStringOption(o => o.setName('reason').setDescription('Reason for kick')),
+
+    new SlashCommandBuilder()
+        .setName('mute')
+        .setDescription('🔇 Mute a user (Timeout)')
+        .addUserOption(o => o.setName('target').setRequired(true).setDescription('User to mute'))
+        .addIntegerOption(o => o.setName('minutes').setRequired(true).setDescription('Duration in minutes')),
+
+    // Info
+    new SlashCommandBuilder()
+        .setName('stats')
+        .setDescription('View global bot performance')
+].map(c => c.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(TOKEN);
 
-// FIX: safe register
 (async () => {
-  try {
-    await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
-    console.log('Commands loaded');
-  } catch (err) {
-    console.error(err);
-  }
+    try {
+        console.log('🔄 Syncing Global Commands...');
+        await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
+        console.log('✅ Commands Synced Successfully');
+    } catch (e) { console.error('❌ Command Sync Error:', e); }
 })();
 
-// ===== INTERACTIONS =====
-client.on('interactionCreate', async interaction => {
+// ===== 3. AUTOMATED EVENTS =====
 
-  if (interaction.isChatInputCommand()) {
+// Join Greeting
+client.on('guildCreate', async (guild) => {
+    const channel = guild.channels.cache.find(c => c.type === ChannelType.GuildText && c.permissionsFor(guild.members.me).has(PermissionsBitField.Flags.SendMessages));
+    const welcome = new EmbedBuilder()
+        .setTitle("🛡️ Shield-Max System Online")
+        .setColor("#5865f2")
+        .setDescription(`Hello **${guild.name}**! I'm your new security engine.\n\n**Quick Start:**\nRun \`/setup\` to create your **Moderator Role**, **Log Channels**, and **Anti-Spam** settings.`)
+        .setTimestamp();
+    if (channel) channel.send({ embeds: [welcome] });
+});
 
-    if (interaction.commandName === 'dashboard') {
+// Anti-Spam Logic
+client.on('messageCreate', async (msg) => {
+    if (!msg.guild || msg.author.bot) return;
+    
+    const config = db.get(msg.guild.id);
+    const limit = config?.spamLimit || 5;
 
-      if (interaction.user.id !== interaction.guild.ownerId) {
-        return interaction.reply({ content: '❌ Owner only', ephemeral: true });
-      }
+    const now = Date.now();
+    const timestamps = antiSpamCache.get(msg.author.id) || [];
+    timestamps.push(now);
+    const filtered = timestamps.filter(t => now - t < 5000);
+    antiSpamCache.set(msg.author.id, filtered);
 
-      const menu = new StringSelectMenuBuilder()
-        .setCustomId('menu')
-        .setPlaceholder('⚙️ Select')
-        .addOptions([
-          { label: 'Enable Anti-Raid', value: 'on' },
-          { label: 'Disable Anti-Raid', value: 'off' },
-          { label: 'Create Logs Channel', value: 'logs' },
-          { label: 'Backup', value: 'backup' },
-          { label: 'Restore', value: 'restore' }
-        ]);
+    if (filtered.length > limit) {
+        await msg.member.timeout(600000, "Automated Anti-Spam").catch(() => {});
+        await msg.channel.bulkDelete(filtered.length).catch(() => {});
+    }
+});
 
-      return interaction.reply({
-        content: '⚙️ Dashboard',
-        components: [new ActionRowBuilder().addComponents(menu)],
-        ephemeral: true
-      });
+// Anti-Nuke (Channel Protection)
+client.on('channelDelete', async (channel) => {
+    const audit = await channel.guild.fetchAuditLogs({ limit: 1, type: 26 }).catch(() => null);
+    const entry = audit?.entries.first();
+    if (!entry) return;
+
+    const count = (antiNukeCache.get(entry.executor.id) || 0) + 1;
+    antiNukeCache.set(entry.executor.id, count);
+
+    if (count > 3) {
+        const mem = await channel.guild.members.fetch(entry.executor.id);
+        await mem.roles.set([]).catch(() => {}); // Quarantine
+    }
+    setTimeout(() => antiNukeCache.delete(entry.executor.id), 60000);
+});
+
+// ===== 4. INTERACTION COMMAND HANDLER =====
+client.on('interactionCreate', async (int) => {
+    if (!int.isChatInputCommand()) return;
+
+    const { commandName, options, guild, member } = int;
+    const config = db.get(guild.id);
+
+    // Permission Check: Owner or Custom Mod Role
+    const isAuthorized = member.permissions.has(PermissionsBitField.Flags.Administrator) || 
+                       member.roles.cache.has(config?.modRole);
+
+    // --- SETUP COMMAND ---
+    if (commandName === 'setup') {
+        if (!member.permissions.has(PermissionsBitField.Flags.Administrator)) 
+            return int.reply({ content: "Only Admins can run setup.", ephemeral: true });
+
+        await int.deferReply({ ephemeral: true });
+        
+        const modRoleName = options.getString('mod_role_name') || "Shield-Moderator";
+        const sensitivity = options.getInteger('spam_sensitivity') || 5;
+
+        // Create Moderator Role
+        const role = await guild.roles.create({
+            name: modRoleName,
+            color: '#2ecc71',
+            reason: 'Shield-Max Setup'
+        });
+
+        // Create Private Logs
+        const logs = await guild.channels.create({
+            name: 'shield-logs',
+            type: ChannelType.GuildText,
+            permissionOverwrites: [{ id: guild.id, deny: [PermissionsBitField.Flags.ViewChannel] }]
+        });
+
+        db.set(guild.id, { modRole: role.id, logChannel: logs.id, spamLimit: sensitivity });
+
+        return int.editReply(`✅ **Setup Complete!**\nRole Created: <@&${role.id}>\nLogs Channel: <#${logs.id}>\nSpam Limit: ${sensitivity} per 5s`);
     }
 
-    if (interaction.commandName === 'setup') {
+    // --- MODERATION COMMANDS ---
+    if (['kick', 'ban', 'mute', 'lockdown'].includes(commandName)) {
+        if (!isAuthorized) return int.reply({ content: "❌ Access Denied: Requires Mod Role.", ephemeral: true });
 
-      const embed = new EmbedBuilder()
-        .setTitle('🛡️ Setup')
-        .setDescription('Enable Anti-Raid?');
+        const target = options.getMember('target');
+        const reason = options.getString('reason') || "Violation of rules.";
 
-      const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId('setup_yes').setLabel('Yes').setStyle(ButtonStyle.Success),
-        new ButtonBuilder().setCustomId('setup_no').setLabel('No').setStyle(ButtonStyle.Danger)
-      );
+        try {
+            if (commandName === 'kick') await target.kick(reason);
+            if (commandName === 'ban') await target.ban({ reason });
+            if (commandName === 'mute') await target.timeout(options.getInteger('minutes') * 60000, reason);
+            if (commandName === 'lockdown') {
+                const status = options.getBoolean('status');
+                await int.channel.permissionOverwrites.edit(guild.id, { SendMessages: !status });
+                return int.reply(`🔒 Channel Lockdown: **${status ? 'ON' : 'OFF'}**`);
+            }
 
-      return interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
-    }
-  }
-
-  // ===== MENU =====
-  if (interaction.isStringSelectMenu()) {
-
-    const id = interaction.guild.id;
-    if (!data[id]) data[id] = {};
-
-    const value = interaction.values[0];
-
-    if (value === 'on') data[id].antiraid = true;
-    if (value === 'off') data[id].antiraid = false;
-
-    if (value === 'logs') {
-      const ch = await interaction.guild.channels.create({
-        name: 'bot-logs',
-        type: ChannelType.GuildText
-      });
-
-      data[id].logChannel = ch.id;
-    }
-
-    if (value === 'backup') {
-      backup[id] = interaction.guild.channels.cache.map(ch => ({
-        name: ch.name,
-        parent: ch.parentId
-      }));
-      saveBackup();
+            int.reply(`✅ Action **${commandName}** completed on **${target.user.tag}**.`);
+            
+            // Log to channel
+            if (config?.logChannel) {
+                const logCh = guild.channels.cache.get(config.logChannel);
+                const logEmbed = new EmbedBuilder()
+                    .setTitle(`🛡️ Log: ${commandName.toUpperCase()}`)
+                    .addFields(
+                        { name: "User", value: target ? target.user.tag : "N/A", inline: true },
+                        { name: "Mod", value: int.user.tag, inline: true },
+                        { name: "Reason", value: reason }
+                    )
+                    .setColor("#f1c40f").setTimestamp();
+                logCh.send({ embeds: [logEmbed] }).catch(() => {});
+            }
+        } catch (e) {
+            int.reply({ content: "❌ Error: Hierarchy issue or missing permissions.", ephemeral: true });
+        }
     }
 
-    if (value === 'restore') {
-      await restoreGuild(interaction.guild);
+    if (commandName === 'stats') {
+        const statsEmbed = new EmbedBuilder()
+            .setTitle("📊 Global Shield-Max Statistics")
+            .addFields(
+                { name: "Servers Protected", value: `${client.guilds.cache.size}`, inline: true },
+                { name: "Total Users Monitoring", value: `${client.users.cache.size}`, inline: true },
+                { name: "Latency", value: `${client.ws.ping}ms`, inline: true }
+            )
+            .setColor("#3498db");
+        int.reply({ embeds: [statsEmbed] });
     }
+});
 
-    saveData();
+// ===== 5. RECOVERY & SHUTDOWN =====
+process.on('unhandledRejection', error => console.error('Unhandled Promise Rejection:', error));
 
-    return interaction.reply({ content: '✅ Updated', ephemeral: true });
-  }
+process.on('SIGINT', () => {
+    console.log('🛑 Shutting down Shield-Max...');
+    webServer.close(() => {
+        client.destroy();
+        process.exit(0);
+    });
+});
 
-  // ===== BUTTONS =====
-
-  if (interaction.commandName === 'setup') {
-  await interaction.reply({
-    content: `🛠️ Full Setup Starting...
-
-Reply with this format (ALL VALUES REQUIRED):
-
-\`\`\`
-raidThreshold spamThreshold minAccountAge logChannelID
-\`\`\`
-
-Example:
-\`\`\`
-5 8 3 123456789012345678
-\`\`\`
-
-- raidThreshold = joins before raid triggers
-- spamThreshold = messages before timeout
-- minAccountAge = days old account must be
-- logChannelID = channel ID for logs
-
-⏳ You have 60 seconds.`,
-    ephemeral: true
-  });
-
-  const filter = m => m.author.id === interaction.user.id;
-  const collector = interaction.channel.createMessageCollector({ filter, max: 1, time: 60000 });
-
-  collector.on('collect', msg => {
-    const parts = msg.content.split(' ');
-
-    if (parts.length < 4) return msg.reply('❌ Invalid format.');
-
-    const [raid, spam, age, log] = parts.map(Number);
-
-    const guildId = interaction.guild.id;
-    if (!data[guildId]) data[guildId] = {};
-
-    data[guildId].antiraid = true;
-    data[guildId].raidThreshold = raid;
-    data[guildId].spamThreshold = spam;
-    data[guildId].minAccountAge = age;
-    data[guildId].logChannel = parts[3]; // keep as string ID
-    data[guildId].backupEnabled = true;
-
-    saveData();
-
-    msg.reply(`✅ FULL SETUP COMPLETE
-
-🛡️ Anti-Raid: ON
-💬 Spam Threshold: ${spam}
-👶 Min Account Age: ${age} days
-📜 Logs: <#${log}>
-🔄 Backup: ENABLED`);
-  });
-}
-  
-// ===== READY =====
 client.once('ready', () => {
-  console.log(`Logged in as ${client.user.tag}`);
+    console.log(`🚀 ${client.user.tag} is protecting ${client.guilds.cache.size} servers.`);
+    client.user.setActivity('for Raids', { type: 3 }); // Watching
 });
 
 client.login(TOKEN);
