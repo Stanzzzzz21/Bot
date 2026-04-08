@@ -39,7 +39,7 @@ const client = new Client({
   ]
 });
 
-// ===== DATA =====
+// ===== DATA ======
 let data = fs.existsSync('./data.json')
   ? JSON.parse(fs.readFileSync('./data.json'))
   : {};
