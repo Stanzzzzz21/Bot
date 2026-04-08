@@ -6,7 +6,8 @@ const {
   REST,
   Routes,
   SlashCommandBuilder,
-  PermissionsBitField
+  PermissionsBitField,
+  ChannelType
 } = require('discord.js');
 
 const express = require('express');
@@ -47,6 +48,21 @@ function saveData() {
   fs.writeFileSync('./data.json', JSON.stringify(data, null, 2));
 }
 
+// ===== RAID TRACKER =====
+let joinTracker = {};
+
+function checkRaid(guildId) {
+  if (!joinTracker[guildId]) joinTracker[guildId] = [];
+
+  const now = Date.now();
+  joinTracker[guildId].push(now);
+
+  // keep last 10 seconds only
+  joinTracker[guildId] = joinTracker[guildId].filter(t => now - t < 10000);
+
+  return joinTracker[guildId].length;
+}
+
 // ===== HELPERS =====
 function isOwner(interaction) {
   return interaction.guild.ownerId === interaction.user.id;
@@ -54,7 +70,7 @@ function isOwner(interaction) {
 
 function sendLog(guild, message) {
   const id = guild.id;
-  if (!data[id]?.logs) return;
+  if (!data[id]?.logChannel) return;
 
   const channel = guild.channels.cache.get(data[id].logChannel);
   if (!channel) return;
@@ -63,14 +79,13 @@ function sendLog(guild, message) {
 }
 
 // ===== PERMISSIONS =====
-function hasPermission(member, guildId) {
-  const role = data[guildId]?.role;
+function hasPermission(member, guildId, command) {
+  const perms = data[guildId]?.permissions || {};
 
-  if (role === 'all') return true;
-  if (role === 'admin') return member.permissions.has(PermissionsBitField.Flags.Administrator);
-  if (role === 'mod') return member.permissions.has(PermissionsBitField.Flags.ManageMessages);
+  if (command === 'ban' || command === 'kick') return true;
 
-  return false;
+  const allowedRoles = perms[command] || [];
+  return allowedRoles.some(roleId => member.roles.cache.has(roleId));
 }
 
 // ===== COMMANDS =====
@@ -80,9 +95,6 @@ const commands = [
 
   new SlashCommandBuilder().setName('ban').setDescription('Ban user')
     .addUserOption(o => o.setName('user').setDescription('User').setRequired(true)),
-
-  new SlashCommandBuilder().setName('setlogs').setDescription('Set log channel')
-    .addChannelOption(o => o.setName('channel').setDescription('Channel').setRequired(true)),
 
   new SlashCommandBuilder().setName('dashboard').setDescription('Setup dashboard')
 ];
@@ -94,24 +106,43 @@ const rest = new REST({ version: '10' }).setToken(TOKEN);
   console.log('Commands registered');
 })();
 
-// ===== BOT JOIN SERVER =====
+// ===== BOT JOIN =====
 client.on('guildCreate', guild => {
   if (!guild.systemChannel) return;
-
   guild.systemChannel.send('🛡️ Bot installed! Use /dashboard to configure me.');
 });
 
-// ===== MEMBER JOIN WELCOME =====
-client.on('guildMemberAdd', member => {
+// ===== JOIN + ANTI RAID =====
+client.on('guildMemberAdd', async member => {
   const id = member.guild.id;
 
-  if (!data[id]?.welcome) return;
-  if (!data[id]?.welcomeChannel) return;
+  if (!data[id]) data[id] = {};
 
-  const channel = member.guild.channels.cache.get(data[id].welcomeChannel);
-  if (!channel) return;
+  // RAID CHECK
+  if (data[id].antiraid) {
+    const count = checkRaid(id);
+    const threshold = data[id].raidThreshold || 5;
 
-  channel.send(`👋 Welcome ${member.user.tag}!`);
+    if (count >= threshold) {
+
+      // LOCK SERVER
+      member.guild.channels.cache.forEach(ch => {
+        ch.permissionOverwrites.edit(member.guild.roles.everyone, {
+          SendMessages: false
+        }).catch(() => {});
+      });
+
+      sendLog(member.guild, '🚨 RAID DETECTED — Server locked');
+
+      return;
+    }
+  }
+
+  // WELCOME
+  if (data[id]?.welcome && data[id]?.welcomeChannel) {
+    const channel = member.guild.channels.cache.get(data[id].welcomeChannel);
+    if (channel) channel.send(`👋 Welcome ${member.user.tag}`);
+  }
 });
 
 // ===== INTERACTIONS =====
@@ -120,61 +151,77 @@ client.on('interactionCreate', async interaction => {
   const id = interaction.guild?.id;
   if (!id) return;
 
-  // DASHBOARD
+  // ===== DASHBOARD =====
   if (interaction.isChatInputCommand() && interaction.commandName === 'dashboard') {
     if (!isOwner(interaction)) {
-      return interaction.reply({ content: '❌ Only the owner can use this', ephemeral: true });
+      return interaction.reply({ content: '❌ Only owner', ephemeral: true });
     }
 
     const menu = new StringSelectMenuBuilder()
       .setCustomId('dashboard')
-      .setPlaceholder('Configure bot')
+      .setPlaceholder('⚙️ Setup')
       .addOptions([
         { label: 'Welcome ON', value: 'welcome_on' },
         { label: 'Welcome OFF', value: 'welcome_off' },
-        { label: 'Set Welcome Channel', value: 'set_welcome_channel' }
+        { label: 'Enable Anti-Raid', value: 'raid_on' },
+        { label: 'Disable Anti-Raid', value: 'raid_off' },
+        { label: 'Create Logs Channel', value: 'create_logs' },
+        { label: 'Set Raid Threshold', value: 'set_threshold' }
       ]);
 
     return interaction.reply({
-      content: '⚙️ Setup Dashboard',
+      content: '⚙️ **Setup Panel**',
       components: [new ActionRowBuilder().addComponents(menu)],
       ephemeral: true
     });
   }
 
-  // MENU HANDLER
+  // ===== MENU =====
   if (interaction.isStringSelectMenu()) {
 
     if (!isOwner(interaction)) {
-      return interaction.reply({ content: '❌ Only owner can configure this', ephemeral: true });
+      return interaction.reply({ content: '❌ Owner only', ephemeral: true });
     }
 
     const value = interaction.values[0];
 
     if (!data[id]) data[id] = {};
+    if (!data[id].permissions) data[id].permissions = {};
 
     if (value === 'welcome_on') data[id].welcome = true;
     if (value === 'welcome_off') data[id].welcome = false;
 
-    if (value === 'set_welcome_channel') {
-      data[id].waitingForChannel = true;
-      saveData();
+    if (value === 'raid_on') data[id].antiraid = true;
+    if (value === 'raid_off') data[id].antiraid = false;
+
+    if (value === 'create_logs') {
+      const channel = await interaction.guild.channels.create({
+        name: 'bot-logs',
+        type: ChannelType.GuildText
+      });
+
+      data[id].logChannel = channel.id;
+      data[id].logs = true;
+    }
+
+    if (value === 'set_threshold') {
+      data[id].waitingThreshold = true;
 
       return interaction.reply({
-        content: '📩 Send channel ID in chat',
+        content: '📩 Send raid threshold number',
         ephemeral: true
       });
     }
 
     saveData();
 
-    return interaction.reply({ content: `Saved: ${value}`, ephemeral: true });
+    return interaction.reply({ content: '✅ Updated', ephemeral: true });
   }
 
-  // COMMANDS
+  // ===== COMMANDS =====
   if (interaction.isChatInputCommand()) {
 
-    if (!hasPermission(interaction.member, id)) {
+    if (!hasPermission(interaction.member, id, interaction.commandName)) {
       return interaction.reply({ content: '❌ No permission', ephemeral: true });
     }
 
@@ -197,38 +244,27 @@ client.on('interactionCreate', async interaction => {
 
       return interaction.reply(`Banned ${user.tag}`);
     }
-
-    if (interaction.commandName === 'setlogs') {
-      const channel = interaction.options.getChannel('channel');
-
-      if (!data[id]) data[id] = {};
-      data[id].logChannel = channel.id;
-
-      saveData();
-
-      return interaction.reply('Log channel set');
-    }
   }
 });
 
-// ===== CHANNEL INPUT =====
+// ===== THRESHOLD INPUT =====
 client.on('messageCreate', message => {
   if (message.author.bot) return;
 
   const id = message.guild?.id;
   if (!id) return;
 
-  if (data[id]?.waitingForChannel) {
-    const channel = message.guild.channels.cache.get(message.content);
+  if (data[id]?.waitingThreshold) {
+    const num = parseInt(message.content);
 
-    if (!channel) return message.reply('❌ Invalid channel ID');
+    if (isNaN(num)) return message.reply('❌ Number only');
 
-    data[id].welcomeChannel = channel.id;
-    data[id].waitingForChannel = false;
+    data[id].raidThreshold = num;
+    data[id].waitingThreshold = false;
 
     saveData();
 
-    message.reply('✅ Welcome channel set!');
+    message.reply(`✅ Threshold set to ${num}`);
   }
 });
 
