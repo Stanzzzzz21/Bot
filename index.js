@@ -5,17 +5,14 @@ const {
 } = require('discord.js');
 const express = require('express');
 
-// --- 1. WEB SERVER ---
 const app = express();
 app.get('/', (req, res) => res.status(200).send('CyberShield Active 🟢'));
 app.listen(process.env.PORT || 3000);
 
 const client = new Client({ 
     intents: [
-        GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMembers,
-        GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent,
+        GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers,
+        GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent,
         GatewayIntentBits.GuildModeration 
     ] 
 });
@@ -24,106 +21,98 @@ const db = new Collection();
 const msgTracker = new Collection();
 const WHITELIST = ['876731494805155851']; 
 
-// Recommended Security Defaults
 const DEFAULT_CONFIG = { 
-    adminRole: null, 
-    logChannel: null, 
-    minAge: 3, 
-    spamLimit: 5, 
-    antiInvite: true 
+    adminRole: null, logChannel: null, minAge: 3, 
+    spamLimit: 5, antiInvite: true, antiMention: true, 
+    antiNuke: true, timeoutMinutes: 10 
 };
 
-// --- HELPER: LOGGING (Guaranteed Text) ---
+// --- HELPER: LOGGING ---
 async function sendLog(guild, { title, msg, color = 0x2b2d31 }) {
     try {
         const config = db.get(guild.id);
         if (!config || !config.logChannel) return;
         const channel = await guild.channels.fetch(config.logChannel).catch(() => null);
         if (!channel) return;
-
-        const embed = new EmbedBuilder()
-            .setTitle(`🛡️ ${title}`)
-            .setDescription(msg)
-            .setColor(color)
-            .setTimestamp();
-
+        const embed = new EmbedBuilder().setTitle(`🛡️ ${title}`).setDescription(msg).setColor(color).setTimestamp();
         await channel.send({ embeds: [embed] }).catch(() => null);
-    } catch (e) { console.error("Log failed - Check channel permissions."); }
+    } catch (e) { console.error("Log failed."); }
 }
 
 // --- COMMANDS ---
 const commands = [
-    new SlashCommandBuilder().setName('setup').setDescription('Setup Admin and Logs with Recommended Settings').addRoleOption(o => o.setName('role').setRequired(true).setDescription('Admin role')),
-    new SlashCommandBuilder().setName('configure').setDescription('Update settings').addIntegerOption(o => o.setName('age').setDescription('Min age')).addIntegerOption(o => o.setName('spam').setDescription('Spam limit')).addBooleanOption(o => o.setName('invites').setDescription('Block invites')),
-    new SlashCommandBuilder().setName('purge').setDescription('Clear messages').addIntegerOption(o => o.setName('amount').setRequired(true).setDescription('Amount')),
-    new SlashCommandBuilder().setName('kick').setDescription('Kick user').addUserOption(o => o.setName('user').setRequired(true).setDescription('Target')),
-    new SlashCommandBuilder().setName('ban').setDescription('Ban user').addUserOption(o => o.setName('user').setRequired(true).setDescription('Target'))
+    new SlashCommandBuilder().setName('setup').setDescription('Setup Admin Role and Logs')
+        .addRoleOption(o => o.setName('role').setRequired(true).setDescription('Admin role')),
+    
+    new SlashCommandBuilder().setName('configure').setDescription('Customize security settings')
+        .addIntegerOption(o => o.setName('age').setDescription('Min account age (days)'))
+        .addIntegerOption(o => o.setName('spam').setDescription('Max messages / 3s'))
+        .addIntegerOption(o => o.setName('timeout').setDescription('Timeout duration (minutes)'))
+        .addBooleanOption(o => o.setName('invites').setDescription('Anti-Invite Toggle'))
+        .addBooleanOption(o => o.setName('mentions').setDescription('Anti-Mention Toggle'))
+        .addBooleanOption(o => o.setName('nuke').setDescription('Anti-Nuke Toggle')),
+
+    new SlashCommandBuilder().setName('settings').setDescription('View security dashboard'),
+    new SlashCommandBuilder().setName('purge').setDescription('Clear messages').addIntegerOption(o => o.setName('amount').setRequired(true)),
+    new SlashCommandBuilder().setName('kick').setDescription('Kick user').addUserOption(o => o.setName('user').setRequired(true)),
+    new SlashCommandBuilder().setName('ban').setDescription('Ban user').addUserOption(o => o.setName('user').setRequired(true))
 ].map(c => c.toJSON());
 
 // --- INTERACTION HANDLER ---
 client.on('interactionCreate', async (int) => {
     if (!int.isChatInputCommand() || !int.guild) return;
-    
-    // Safety for long-running tasks
     await int.deferReply({ ephemeral: true }).catch(() => null);
-    
     let config = db.get(int.guildId) || { ...DEFAULT_CONFIG };
 
     if (int.commandName === 'setup') {
-        if (int.user.id !== int.guild.ownerId && !WHITELIST.includes(int.user.id)) return int.editReply("❌ Error: Owner Only.");
-        
+        if (int.user.id !== int.guild.ownerId && !WHITELIST.includes(int.user.id)) return int.editReply("❌ Owner Only.");
         let logCh = int.guild.channels.cache.find(c => c.name === 'shield-logs') || await int.guild.channels.create({
-            name: 'shield-logs', 
-            type: ChannelType.GuildText,
+            name: 'shield-logs', type: ChannelType.GuildText,
             permissionOverwrites: [{ id: int.guild.id, deny: [PermissionsBitField.Flags.ViewChannel] }]
         }).catch(() => null);
-
         config.adminRole = int.options.getRole('role').id;
         config.logChannel = logCh?.id || null;
-        config.minAge = 3; 
-        config.antiInvite = true;
-        
         db.set(int.guildId, config);
-        
-        await sendLog(int.guild, { title: "System Online", msg: `**Configured by:** ${int.user.tag}\n**Admin Role:** <@&${config.adminRole}>\n**Settings:** Recommended Security Defaults Applied.`, color: 0x57f287 });
-        return int.editReply(`✅ **Setup Complete:** Logs in <#${config.logChannel}>`);
+        return int.editReply(`✅ Setup complete. Logs: <#${config.logChannel}>`);
     }
 
     const isAuth = int.user.id === int.guild.ownerId || WHITELIST.includes(int.user.id) || (config.adminRole && int.member.roles.cache.has(config.adminRole));
-    if (!isAuth) return int.editReply("❌ Access Denied.");
+    if (!isAuth) return int.editReply("❌ Unauthorized.");
 
-    try {
-        if (int.commandName === 'configure') {
-            config.minAge = int.options.getInteger('age') ?? config.minAge;
-            config.spamLimit = int.options.getInteger('spam') ?? config.spamLimit;
-            if (int.options.getBoolean('invites') !== null) config.antiInvite = int.options.getBoolean('invites');
-            db.set(int.guildId, config);
-            await sendLog(int.guild, { title: "Settings Updated", msg: `**Moderator:** ${int.user.tag}\n**Update:** Security configuration has been modified via /configure.`, color: 0x3498db });
-            return int.editReply("Settings updated.");
-        }
-        if (int.commandName === 'purge') {
-            const amt = int.options.getInteger('amount');
-            await int.channel.bulkDelete(Math.min(amt, 100), true);
-            await sendLog(int.guild, { title: "Chat Purged", msg: `**Moderator:** ${int.user.tag}\n**Action:** Cleared ${amt} messages in ${int.channel.name}`, color: 0x3498db });
-            return int.editReply(`Cleared ${amt} messages.`);
-        }
-        if (int.commandName === 'kick' || int.commandName === 'ban') {
-            const target = int.options.getMember('user');
-            if (int.commandName === 'kick') {
-                await target.kick();
-                await sendLog(int.guild, { title: "User Kicked", msg: `**Target:** ${target.user.tag}\n**Moderator:** ${int.user.tag}`, color: 0xffa500 });
-            } else {
-                await target.ban();
-                await sendLog(int.guild, { title: "User Banned", msg: `**Target:** ${target.user.tag}\n**Moderator:** ${int.user.tag}`, color: 0xff0000 });
-            }
-            return int.editReply(`Action completed.`);
-        }
-    } catch (e) { return int.editReply("Execution Error. Check Bot Permissions."); }
+    if (int.commandName === 'configure') {
+        config.minAge = int.options.getInteger('age') ?? config.minAge;
+        config.spamLimit = int.options.getInteger('spam') ?? config.spamLimit;
+        config.timeoutMinutes = int.options.getInteger('timeout') ?? config.timeoutMinutes;
+        if (int.options.getBoolean('invites') !== null) config.antiInvite = int.options.getBoolean('invites');
+        if (int.options.getBoolean('mentions') !== null) config.antiMention = int.options.getBoolean('mentions');
+        if (int.options.getBoolean('nuke') !== null) config.antiNuke = int.options.getBoolean('nuke');
+        db.set(int.guildId, config);
+        return int.editReply("✅ Configuration updated.");
+    }
+
+    if (int.commandName === 'settings') {
+        const embed = new EmbedBuilder().setTitle('🛡️ Current Settings').setColor(0x5865f2)
+            .addFields(
+                { name: 'Anti-Invite', value: config.antiInvite ? '✅' : '❌', inline: true },
+                { name: 'Anti-Mention', value: config.antiMention ? '✅' : '❌', inline: true },
+                { name: 'Anti-Nuke', value: config.antiNuke ? '✅' : '❌', inline: true },
+                { name: 'Age Gate', value: `${config.minAge} Days`, inline: true },
+                { name: 'Timeout', value: `${config.timeoutMinutes}m`, inline: true }
+            );
+        return int.editReply({ embeds: [embed] });
+    }
+
+    if (int.commandName === 'purge') {
+        const amt = int.options.getInteger('amount');
+        await int.channel.bulkDelete(Math.min(amt, 100), true);
+        return int.editReply(`Cleared ${amt} messages.`);
+    }
 });
 
 // --- ANTI-NUKE ---
 client.on('channelDelete', async (ch) => {
-    if (!ch.guild) return;
+    const config = db.get(ch.guild?.id) || DEFAULT_CONFIG;
+    if (!ch.guild || !config.antiNuke) return;
     const logs = await ch.guild.fetchAuditLogs({ limit: 1, type: AuditLogEvent.ChannelDelete }).catch(() => null);
     const exec = logs?.entries.first()?.executor;
     if (exec && (WHITELIST.includes(exec.id) || exec.id === ch.guild.ownerId)) return;
@@ -132,24 +121,19 @@ client.on('channelDelete', async (ch) => {
         name: ch.name, type: ch.type, parent: ch.parentId,
         permissionOverwrites: ch.permissionOverwrites.cache.map(p => ({ id: p.id, allow: p.allow, deny: p.deny }))
     }).catch(() => null);
-    await sendLog(ch.guild, { title: "Nuke Intercepted", msg: `**Channel Restored:** ${ch.name}\n**Deleted by:** ${exec?.tag || 'Unknown'}\n**Action:** Channel recreated.`, color: 0xff0000 });
+    await sendLog(ch.guild, { title: "Nuke Intercepted", msg: `Restored: **${ch.name}**\nBy: **${exec?.tag}**`, color: 0xff0000 });
 });
 
 // --- AUTO-DEFENSE ---
 client.on('guildMemberAdd', async (m) => {
     const config = db.get(m.guild.id) || DEFAULT_CONFIG;
-    const logRef = config.logChannel ? `check <#${config.logChannel}> for more info.` : "check #shield-logs for more info.";
-
     if (["discord.gg/", "free-nitro", "nuke-bot", "nitro-gift"].some(t => m.user.username.toLowerCase().includes(t))) {
-        await m.ban({ reason: "Scam Username" }).catch(() => null);
-        const chan = m.guild.systemChannel || m.guild.channels.cache.find(c => c.type === ChannelType.GuildText);
-        if (chan) chan.send(`⚠️ **Anti-Scam: Auto-bans users with "nitro scam" or "nuke-bot" names. ${logRef}**`).then(msg => setTimeout(() => msg.delete(), 6000));
-        return sendLog(m.guild, { title: "Scam Ban", msg: `**User:** ${m.user.tag}\n**Reason:** Malicious username (Scam Filter).\n**Action:** Permanent Ban.`, color: 0xff0000 });
+        await m.ban({ reason: "Scam Name" }).catch(() => null);
+        return sendLog(m.guild, { title: "Scam Ban", msg: `Banned: ${m.user.tag}`, color: 0xff0000 });
     }
-
     if ((Date.now() - m.user.createdTimestamp) / 86400000 < config.minAge) {
         await m.kick("Age Gate").catch(() => null);
-        return sendLog(m.guild, { title: "Age Gate Kick", msg: `**User:** ${m.user.tag}\n**Reason:** Account age less than required ${config.minAge} days.\n**Action:** User Kicked.`, color: 0x95a5a6 });
+        return sendLog(m.guild, { title: "Age Gate Kick", msg: `Kicked: ${m.user.tag}`, color: 0x95a5a6 });
     }
 });
 
@@ -158,19 +142,15 @@ client.on('messageCreate', async (msg) => {
     const config = db.get(msg.guild.id) || DEFAULT_CONFIG;
     if (WHITELIST.includes(msg.author.id) || msg.author.id === msg.guild.ownerId) return;
 
-    const logRef = config.logChannel ? `check <#${config.logChannel}> for more info.` : "check #shield-logs for more info.";
-
-    if (msg.mentions.users.size > 5 || msg.content.includes('@everyone')) {
+    if (config.antiMention && (msg.mentions.users.size > 5 || msg.content.includes('@everyone'))) {
         await msg.delete().catch(() => null);
-        await msg.member.timeout(3600000).catch(() => null);
-        msg.channel.send(`**⚠️ Anti-Mention: Blocks mass pings + automatic 1hr timeout. ${logRef}**`).then(m => setTimeout(() => m.delete(), 6000)).catch(() => null);
-        return sendLog(msg.guild, { title: "Mention Spam", msg: `**User:** ${msg.author.tag}\n**Action:** Message Deleted + 1 Hour Timeout.\n**Reason:** Exceeded mention limit/Pinged @everyone.`, color: 0xf1c40f });
+        await msg.member.timeout(config.timeoutMinutes * 60000).catch(() => null);
+        return sendLog(msg.guild, { title: "Mention Spam", msg: `${msg.author.tag} timed out.`, color: 0xf1c40f });
     }
 
     if (config.antiInvite && /discord\.(gg|com\/invite)/i.test(msg.content)) {
         await msg.delete().catch(() => null);
-        msg.channel.send(`**🚫 Anti-Invite: Blocks unauthorized server invites. ${logRef}**`).then(m => setTimeout(() => m.delete(), 6000)).catch(() => null);
-        return sendLog(msg.guild, { title: "Invite Blocked", msg: `**User:** ${msg.author.tag}\n**Action:** Unauthorized Discord Invite link removed.`, color: 0xf1c40f });
+        return sendLog(msg.guild, { title: "Invite Blocked", msg: `From: ${msg.author.tag}`, color: 0xf1c40f });
     }
 
     let userData = msgTracker.get(msg.author.id) || { count: 0, last: Date.now() };
@@ -180,17 +160,26 @@ client.on('messageCreate', async (msg) => {
 
     if (userData.count >= config.spamLimit) {
         await msg.delete().catch(() => null);
-        await msg.member.timeout(600000).catch(() => null);
-        msg.channel.send(`**🛑 Anti-Spam: Rate-limiting for chat messages. ${logRef}**`).then(m => setTimeout(() => m.delete(), 6000)).catch(() => null);
-        return sendLog(msg.guild, { title: "Spam Filter", msg: `**User:** ${msg.author.tag}\n**Action:** Message Deleted + 10 Minute Timeout.\n**Reason:** Sent messages too rapidly.`, color: 0xf1c40f });
+        await msg.member.timeout(config.timeoutMinutes * 60000).catch(() => null);
+        return sendLog(msg.guild, { title: "Spam Filter", msg: `${msg.author.tag} timed out.`, color: 0xf1c40f });
     }
 });
 
+// --- BEAUTIFIED WELCOME MESSAGE ---
 client.on('guildCreate', async (guild) => {
-    const welcome = guild.systemChannel || guild.channels.cache.find(c => c.type === ChannelType.GuildText && c.permissionsFor(guild.members.me).has(PermissionsBitField.Flags.SendMessages));
-    if (welcome) {
-        welcome.send(`🛡️ **CyberShield Active.** \nUse \`/setup\` to authorize a Server Administrator and initialize logs. \n*This message will self-delete in 4 minutes.*`)
-        .then(msg => { setTimeout(() => msg.delete().catch(() => null), 240000); }).catch(() => null);
+    const chan = guild.systemChannel || guild.channels.cache.find(c => c.type === ChannelType.GuildText);
+    if (chan) {
+        const embed = new EmbedBuilder()
+            .setTitle('🛡️ CyberShield Deployment Success')
+            .setColor(0x57f287)
+            .setDescription('Ready to protect your server. Please run `/setup` to begin.')
+            .addFields(
+                { name: '✨ Features', value: '• Anti-Scam\n• Anti-Spam\n• Anti-Invite\n• Anti-Mention\n• Anti-Nuke\n• Age-Gate', inline: true },
+                { name: '⚙️ Recommended Settings', value: '• Age Gate: 3 Days\n• Spam Limit: 5 msgs / 3s\n• Anti-Invite: Enabled\n• Anti-Nuke: Enabled', inline: true }
+            )
+            .setFooter({ text: 'This message will self-delete in 4 minutes.' });
+
+        chan.send({ embeds: [embed] }).then(m => setTimeout(() => m.delete().catch(() => null), 240000));
     }
 });
 
