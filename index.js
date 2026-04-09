@@ -226,6 +226,21 @@ client.on('guildCreate', async (guild) => {
         ch.type === ChannelType.GuildText && ch.permissionsFor(guild.members.me).has(PermissionsBitField.Flags.SendMessages)
     );
 
+    client.on('guildCreate', async (guild) => {
+    // Finds the best channel to send the welcome message
+    const welcomeChannel = guild.systemChannel || guild.channels.cache.find(ch => 
+        ch.type === ChannelType.GuildText && ch.permissionsFor(guild.members.me).has(PermissionsBitField.Flags.SendMessages)
+    );
+
+    if (welcomeChannel) {
+        welcomeChannel.send(
+            `Hello **${guild.name}**, I'm your new security bot! \n\n` +
+            `**IMPORTANT:** Use \`/setup\` and \`/settings\` to configure me. \n` +
+            `I come packed with features like **Anti-Raid** and **Anti-Spam** to keep your community safe. \n\n` +
+            `Once you've finished setting up, check out our dashboard here: https://cyber-shield-gray.vercel.app`
+        );
+    }
+});
  
 
 client.login(process.env.TOKEN);
