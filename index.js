@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, ChannelType, PermissionsBitField, Collection, AuditLogEvent, EmbedBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, ChannelType, PermissionsBitField, Collection, EmbedBuilder } = require('discord.js');
 const express = require('express');
 
 const app = express();
@@ -7,127 +7,104 @@ app.listen(process.env.PORT || 3000);
 
 const client = new Client({ 
     intents: [
-        GatewayIntentBits.Guilds, 
-        GatewayIntentBits.GuildMembers,
-        GatewayIntentBits.GuildMessages, 
-        GatewayIntentBits.MessageContent, // CRITICAL: ENABLE IN DEV PORTAL
+        GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers,
+        GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, 
         GatewayIntentBits.GuildModeration 
     ] 
 });
 
 const db = new Collection(); 
-const msgTracker = new Collection();
-const raidTracker = new Collection(); 
 const WHITELIST = ['876731494805155851']; 
 
-const DEFAULT_CONFIG = { 
-    adminRole: null, logChannel: null, 
-    minAge: 3, spamLimit: 5, timeoutMinutes: 10,
-    antiInvite: true, antiNuke: true 
-};
+// --- HELPER: SYSTEM LOGGING ---
+async function sendLog(guild, title, msg, user = null) {
+    const config = db.get(guild.id);
+    if (!config || !config.logChannel) return;
+    const channel = await guild.channels.fetch(config.logChannel).catch(() => null);
+    if (!channel) return;
 
-// --- LOGGING ENGINE ---
-async function sendLog(guild, { title, msg, color = 0x2b2d31, user = null }) {
-    try {
-        const config = db.get(guild.id) || DEFAULT_CONFIG;
-        if (!config.logChannel) return;
-        const channel = await guild.channels.fetch(config.logChannel).catch(() => null);
-        if (!channel) return;
-        const embed = new EmbedBuilder().setTitle(title).setDescription(msg).setColor(color).setTimestamp();
-        if (user) embed.setFooter({ text: `Target: ${user.tag} (${user.id})` });
-        await channel.send({ embeds: [embed] }).catch(() => null);
-    } catch (e) { console.error("Logging failed."); }
+    const embed = new EmbedBuilder()
+        .setTitle(title)
+        .setDescription(msg)
+        .setColor(0x2b2d31)
+        .setTimestamp();
+    if (user) embed.setFooter({ text: `Target: ${user.tag}` });
+    
+    await channel.send({ embeds: [embed] }).catch(() => null);
 }
 
-// --- COMMAND DEFINITIONS ---
 const commands = [
-    new SlashCommandBuilder().setName('setup').setDescription('Link admin role and log channel')
-        .addRoleOption(o => o.setName('admin').setRequired(true).setDescription('Moderator role')),
-    new SlashCommandBuilder().setName('kick').setDescription('Kick a user')
-        .addUserOption(o => o.setName('target').setRequired(true).setDescription('User to kick'))
-        .addStringOption(o => o.setName('reason').setDescription('Reason')),
-    new SlashCommandBuilder().setName('ban').setDescription('Ban a user')
-        .addUserOption(o => o.setName('target').setRequired(true).setDescription('User to ban'))
-        .addStringOption(o => o.setName('reason').setDescription('Reason')),
-    new SlashCommandBuilder().setName('freeze').setDescription('Lock channel or server')
-        .addStringOption(o => o.setName('scope').setRequired(true).setDescription('Scope').addChoices({name:'Channel', value:'channel'},{name:'Server', value:'server'})),
-    new SlashCommandBuilder().setName('unfreeze').setDescription('Unlock channel or server')
-        .addStringOption(o => o.setName('scope').setRequired(true).setDescription('Scope').addChoices({name:'Channel', value:'channel'},{name:'Server', value:'server'})),
-    new SlashCommandBuilder().setName('purge').setDescription('Bulk delete messages')
-        .addIntegerOption(o => o.setName('amount').setRequired(true).setDescription('Amount')),
-    new SlashCommandBuilder().setName('settings').setDescription('View security status')
+    new SlashCommandBuilder().setName('setup').setDescription('Setup logs').addRoleOption(o => o.setName('admin').setRequired(true)),
+    new SlashCommandBuilder().setName('kick').setDescription('Kick user').addUserOption(o => o.setName('target').setRequired(true)),
+    new SlashCommandBuilder().setName('ban').setDescription('Ban user').addUserOption(o => o.setName('target').setRequired(true)),
+    new SlashCommandBuilder().setName('purge').setDescription('Delete msgs').addIntegerOption(o => o.setName('amount').setRequired(true))
 ].map(c => c.toJSON());
 
-// --- INTERACTION HANDLER ---
-client.on('interactionCreate', async (int) => {
-    if (!int.isChatInputCommand() || !int.guild) return;
-    let config = db.get(int.guildId) || { ...DEFAULT_CONFIG };
-    const isAuth = int.user.id === int.guild.ownerId || WHITELIST.includes(int.user.id) || (config.adminRole && int.member.roles.cache.has(config.adminRole));
+// --- WELCOME MESSAGE ON JOIN ---
+client.on('guildCreate', async (guild) => {
+    const channel = guild.systemChannel || guild.channels.cache.find(c => c.type === ChannelType.GuildText);
+    if (!channel) return;
+
+    const welcome = new EmbedBuilder()
+        .setTitle('🛡️ CyberShield Active')
+        .setDescription('I am ready to protect the server.\n\n**Next Steps:**\n1. Run `/setup` to link your admin role.\n2. Move my role to the **top** of the list.')
+        .setColor(0x57f287);
     
+    channel.send({ embeds: [welcome] }).catch(() => null);
+});
+
+// --- COMMAND HANDLER + LOGGING ---
+client.on('interactionCreate', async (int) => {
+    if (!int.isChatInputCommand()) return;
+    let config = db.get(int.guildId) || { adminRole: null, logChannel: null };
+
     if (int.commandName === 'setup') {
-        if (int.user.id !== int.guild.ownerId && !WHITELIST.includes(int.user.id)) return int.reply({ content: "Error: Owner Only.", ephemeral: true });
+        if (int.user.id !== int.guild.ownerId) return int.reply({ content: "Owner only.", ephemeral: true });
+        
         let logCh = int.guild.channels.cache.find(c => c.name === 'shield-logs') || await int.guild.channels.create({
-            name: 'shield-logs', type: ChannelType.GuildText,
+            name: 'shield-logs',
+            type: ChannelType.GuildText,
             permissionOverwrites: [{ id: int.guild.id, deny: [PermissionsBitField.Flags.ViewChannel] }]
         });
+
         config.adminRole = int.options.getRole('admin').id;
         config.logChannel = logCh.id;
         db.set(int.guildId, config);
-        return int.reply({ content: "Setup Complete. Logs: #shield-logs", ephemeral: true });
+        
+        return int.reply({ content: `✅ Setup Complete. Logs will appear in <#${logCh.id}>`, ephemeral: true });
     }
 
-    if (!isAuth) return int.reply({ content: "Access Denied.", ephemeral: true });
+    const isAuth = int.user.id === int.guild.ownerId || (config.adminRole && int.member.roles.cache.has(config.adminRole));
+    if (!isAuth) return int.reply({ content: "No permission.", ephemeral: true });
 
-    try {
-        if (int.commandName === 'kick') {
-            const user = int.options.getMember('target');
-            if (!user.kickable) return int.reply({ content: "Cannot kick this user.", ephemeral: true });
-            await user.kick(int.options.getString('reason') || "No reason.");
-            return int.reply({ content: `Kicked ${user.user.tag}.`, ephemeral: true });
-        }
-        if (int.commandName === 'ban') {
-            const user = int.options.getMember('target');
-            if (!user.bannable) return int.reply({ content: "Cannot ban this user.", ephemeral: true });
-            await user.ban({ reason: int.options.getString('reason') || "No reason." });
-            return int.reply({ content: `Banned ${user.user.tag}.`, ephemeral: true });
-        }
-        if (int.commandName === 'purge') {
-            const deleted = await int.channel.bulkDelete(Math.min(int.options.getInteger('amount'), 100), true);
-            return int.reply({ content: `Cleaned ${deleted.size} messages.`, ephemeral: true });
-        }
-        if (int.commandName === 'freeze' || int.commandName === 'unfreeze') {
-            const state = int.commandName === 'freeze' ? false : true;
-            if (int.options.getString('scope') === 'channel') {
-                await int.channel.permissionOverwrites.edit(int.guild.roles.everyone, { SendMessages: state });
-            } else {
-                int.guild.channels.cache.forEach(c => { if(c.type === ChannelType.GuildText) c.permissionOverwrites.edit(int.guild.roles.everyone, { SendMessages: state }).catch(()=>null); });
-            }
-            return int.reply({ content: `Server status: ${int.commandName}.`, ephemeral: true });
-        }
-    } catch (e) { return int.reply({ content: "Hierarchy Error.", ephemeral: true }); }
-});
-
-// --- AUTOMATED DEFENSE (WEBHOOKS + ANTI-INVITE) ---
-client.on('messageCreate', async (msg) => {
-    if (!msg.guild || msg.author.bot) return;
-    const config = db.get(msg.guild.id) || DEFAULT_CONFIG;
-
-    if (/discord(?:app)?\.com\/api\/webhooks\//i.test(msg.content)) {
-        await msg.delete().catch(() => null);
-        msg.channel.send("Blocked: Dangerous link.").then(m => setTimeout(() => m.delete().catch(() => null), 300000));
-        return sendLog(msg.guild, { title: "Webhook Link Blocked", msg: `Channel: ${msg.channel.name}`, color: 0xff0000, user: msg.author });
+    if (int.commandName === 'kick') {
+        const target = int.options.getMember('target');
+        if (!target.kickable) return int.reply("Cannot kick that user.");
+        await target.kick();
+        await sendLog(int.guild, "User Kicked", `Action by: ${int.user.tag}`, target.user);
+        return int.reply(`Kicked ${target.user.tag}`);
     }
 
-    if (config.antiInvite && /discord\.(gg|com\/invite)/i.test(msg.content)) {
-        if (WHITELIST.includes(msg.author.id)) return;
-        await msg.delete().catch(() => null);
+    if (int.commandName === 'ban') {
+        const target = int.options.getMember('target');
+        if (!target.bannable) return int.reply("Cannot ban that user.");
+        await target.ban();
+        await sendLog(int.guild, "User Banned", `Action by: ${int.user.tag}`, target.user);
+        return int.reply(`Banned ${target.user.tag}`);
+    }
+
+    if (int.commandName === 'purge') {
+        const amt = int.options.getInteger('amount');
+        const deleted = await int.channel.bulkDelete(Math.min(amt, 100), true);
+        await sendLog(int.guild, "Messages Purged", `${deleted.size} messages cleared in <#${int.channel.id}> by ${int.user.tag}`);
+        return int.reply({ content: `Deleted ${deleted.size} messages.`, ephemeral: true });
     }
 });
 
 client.once('ready', async () => {
     const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
     await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
-    console.log(`${client.user.tag} Online`);
+    console.log("🛡️ CyberShield Ready & Logging Active");
 });
 
 client.login(process.env.TOKEN);
