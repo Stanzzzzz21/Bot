@@ -42,7 +42,7 @@ const msgTracker = new Collection();
 const joinTracker = [];
 
 // 🔑 MASTER WHITELIST (Add your ID here as a backup)
-const WHITELIST = ['YOUR_ID_HERE']; 
+const WHITELIST = ['876731494805155851']; 
 
 const DEFAULT_CONFIG = {
     managerRole: null,
@@ -223,6 +223,16 @@ client.once('ready', async () => {
     const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
     await rest.put(Routes.applicationCommands('1491381996025413764'), { body: commands });
     console.log("🛡️ CyberShield Complete Edition: Online");
+});
+
+client.on('guildCreate', async (guild) => {
+    const welcomeChannel = guild.systemChannel || guild.channels.cache.find(ch => 
+        ch.type === 0 && ch.permissionsFor(guild.members.me).has('SendMessages')
+    );
+
+    if (welcomeChannel) {
+        welcomeChannel.send(`Hello **${guild.name}**, I'm your new security bot! \n**IMPORTANT:** Use \`/setup\` and \`/settings\` to configure me. We have lots of security features like: Anti-Raid and Anti-Spam! When you have finished setting up please check out cyber-shield-gray.vercel.app **our website!** `);
+    }
 });
 
 client.login(process.env.TOKEN);
