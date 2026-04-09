@@ -226,9 +226,6 @@ client.on('guildCreate', async (guild) => {
         ch.type === ChannelType.GuildText && ch.permissionsFor(guild.members.me).has(PermissionsBitField.Flags.SendMessages)
     );
 
-    if (welcomeChannel) {
-        welcomeChannel.send(`Hello **${guild.name}**, I'm your new security bot! \n**IMPORTANT:** Use \`/setup\` and \`/settings\` to configure me. We have lots of security features like: Anti-Raid and Anti \n**IMPORTANT:** Use \`/setup\` and \`/settings\` to configure me. We have lots of security features like: Anti-Raid and Anti-Spam! When you have finished setting up please check out cyber-shield-gray.vercel.app **our website!** `);
-    }
-});
+ 
 
 client.login(process.env.TOKEN);
