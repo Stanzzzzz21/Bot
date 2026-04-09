@@ -5,29 +5,12 @@ const {
 } = require('discord.js');
 const express = require('express');
 
-// --- KEEP ALIVE SYSTEM START ---
+// --- KEEP ALIVE ---
 const app = express();
 const port = process.env.PORT || 3000;
+app.get('/', (req, res) => res.send('CyberShield is Pulse-Active 🛡️'));
+app.listen(port, () => console.log(`Keep-Alive running on ${port}`));
 
-app.get('/', (req, res) => {
-  res.send('CyberShield is Pulse-Active 🛡️');
-});
-
-app.listen(port, () => {
-  console.log(`Keep-Alive server running on port ${port}`);
-});
-
-// FIXED PING LOGIC (Using native fetch available in Node 18+)
-setInterval(() => {
-  const myUrl = "https://bot-gyyu.onrender.com"; 
-  
-  fetch(myUrl)
-    .then(() => console.log('🛡️ CyberShield Pulse: OK'))
-    .catch(err => console.log('🛡️ Pulse Failed: Bot is likely asleep.'));
-}, 60000); 
-// --- KEEP ALIVE SYSTEM END ---
-
-// FIXED INTENTS (Listing them explicitly prevents Status 1 crashes)
 const client = new Client({ 
     intents: [
         GatewayIntentBits.Guilds,
@@ -41,9 +24,8 @@ const client = new Client({
 const db = new Collection(); 
 const nukeTracker = new Collection();
 const msgTracker = new Collection();
-let joinTracker = []; // Changed to let so we can clean it
+let joinTracker = [];
 
-// 🔑 MASTER WHITELIST
 const WHITELIST = ['876731494805155851']; 
 
 const DEFAULT_CONFIG = {
@@ -56,7 +38,7 @@ const DEFAULT_CONFIG = {
     joinLimit: 5
 };
 
-// ===== AUTHENTICATION ENGINE =====
+// Auth Check: Does the user have permission?
 const isAuth = (int, config) => {
     if (int.user.id === int.guild.ownerId) return true;
     if (WHITELIST.includes(int.user.id)) return true;
@@ -64,183 +46,133 @@ const isAuth = (int, config) => {
     return false;
 };
 
-// ===== COMMAND REGISTRATION =====
+// --- COMMANDS ---
 const commands = [
-    new SlashCommandBuilder()
-        .setName('setup')
-        .setDescription('Initialize CyberShield & Set Manager Role')
-        .addRoleOption(o => o.setName('role').setDescription('Role allowed to manage security').setRequired(true)),
-    
-    new SlashCommandBuilder()
-        .setName('configure')
-        .setDescription('Adjust security sensitivity')
-        .addIntegerOption(o => o.setName('age').setDescription('Min account age (days)'))
-        .addIntegerOption(o => o.setName('spam').setDescription('Max messages per 3s'))
-        .addIntegerOption(o => o.setName('nuke').setDescription('Max deletions per 10s'))
-        .addBooleanOption(o => o.setName('invites').setDescription('Block Discord Invites')),
-
-    new SlashCommandBuilder().setName('settings').setDescription('View current security levels'),
-    new SlashCommandBuilder().setName('audit').setDescription('Scan for webhooks and admin risks')
+    new SlashCommandBuilder().setName('setup').setDescription('Setup Manager Role').addRoleOption(o => o.setName('role').setRequired(true).setDescription('Role to manage bot')),
+    new SlashCommandBuilder().setName('configure').setDescription('Adjust security').addIntegerOption(o => o.setName('age').setDescription('Min days')).addIntegerOption(o => o.setName('spam').setDescription('Max msg/3s')).addBooleanOption(o => o.setName('invites').setDescription('Block Invites')),
+    new SlashCommandBuilder().setName('settings').setDescription('View current security'),
+    new SlashCommandBuilder().setName('audit').setDescription('Risk scan'),
+    new SlashCommandBuilder().setName('kick').setDescription('Kick user').addUserOption(o => o.setName('target').setRequired(true)).addStringOption(o => o.setName('reason')),
+    new SlashCommandBuilder().setName('ban').setDescription('Ban user').addUserOption(o => o.setName('target').setRequired(true)).addStringOption(o => o.setName('reason')),
+    new SlashCommandBuilder().setName('purge').setDescription('Clear messages').addIntegerOption(o => o.setName('amount').setRequired(true)),
+    new SlashCommandBuilder().setName('role').setDescription('Toggle role').addUserOption(o => o.setName('user').setRequired(true)).addRoleOption(o => o.setName('role').setRequired(true))
 ].map(c => c.toJSON());
 
+// --- INTERACTION HANDLER ---
 client.on('interactionCreate', async (int) => {
     if (!int.isChatInputCommand()) return;
-
     let config = db.get(int.guildId) || { ...DEFAULT_CONFIG };
 
     if (int.commandName === 'setup') {
-        if (int.user.id !== int.guild.ownerId && !WHITELIST.includes(int.user.id)) {
-            return int.reply({ content: "❌ **Error:** Only the Server Owner can run setup.", ephemeral: true });
-        }
-        await int.deferReply({ ephemeral: true });
+        if (int.user.id !== int.guild.ownerId && !WHITELIST.includes(int.user.id)) return int.reply({ content: "❌ Owner only.", ephemeral: true });
         const role = int.options.getRole('role');
         config.managerRole = role.id;
-        
-        let logCh = int.guild.channels.cache.find(c => c.name === 'shield-logs');
-        if (!logCh) {
-            logCh = await int.guild.channels.create({
-                name: 'shield-logs',
-                type: ChannelType.GuildText,
-                permissionOverwrites: [{ id: int.guild.id, deny: [PermissionsBitField.Flags.ViewChannel] }]
-            });
-        }
+        let logCh = int.guild.channels.cache.find(c => c.name === 'shield-logs') || await int.guild.channels.create({ name: 'shield-logs', type: ChannelType.GuildText, permissionOverwrites: [{ id: int.guild.id, deny: [PermissionsBitField.Flags.ViewChannel] }] });
         config.logs = logCh.id;
         db.set(int.guildId, config);
-        return int.editReply(`✅ **CyberShield Initialized.** Role <@&${role.id}> can now use security commands.`);
+        return int.reply({ content: `✅ Setup complete. <@&${role.id}> can now manage the bot.`, ephemeral: true });
     }
 
-    if (!isAuth(int, config)) {
-        return int.reply({ content: "❌ **Access Denied.**", ephemeral: true });
+    if (!isAuth(int, config)) return int.reply({ content: "❌ No permission.", ephemeral: true });
+
+    // Mod Commands
+    if (int.commandName === 'kick') {
+        const target = int.options.getMember('target');
+        if (!target.kickable) return int.reply("❌ Cannot kick.");
+        await target.kick();
+        return int.reply(`👞 Kicked **${target.user.tag}**`);
     }
 
-    if (int.commandName === 'configure') {
-        await int.deferReply({ ephemeral: true });
-        const age = int.options.getInteger('age');
-        const spam = int.options.getInteger('spam');
-        const nuke = int.options.getInteger('nuke');
-        const invites = int.options.getBoolean('invites');
-
-        if (age !== null) config.minAge = age;
-        if (spam !== null) config.spamLimit = spam;
-        if (nuke !== null) config.nukeLimit = nuke;
-        if (invites !== null) config.antiInvite = invites;
-
-        db.set(int.guildId, config);
-        return int.editReply("✅ **Settings Saved.**");
+    if (int.commandName === 'ban') {
+        const target = int.options.getMember('target');
+        if (!target.bannable) return int.reply("❌ Cannot ban.");
+        await target.ban();
+        return int.reply(`🔨 Banned **${target.user.tag}**`);
     }
 
-    if (int.commandName === 'settings') {
-        await int.deferReply({ ephemeral: true });
-        const embed = new EmbedBuilder()
-            .setTitle("🛡️ CyberShield Configuration")
-            .setColor("#2ecc71")
-            .addFields(
-                { name: "Manager Role", value: config.managerRole ? `<@&${config.managerRole}>` : "None", inline: true },
-                { name: "Age Gate", value: `${config.minAge} Days`, inline: true },
-                { name: "Nuke Threshold", value: `${config.nukeLimit} Actions`, inline: true },
-                { name: "Anti-Invite", value: config.antiInvite ? "ON" : "OFF", inline: true }
-            );
-        return int.editReply({ embeds: [embed] });
+    if (int.commandName === 'purge') {
+        const amt = int.options.getInteger('amount');
+        await int.channel.bulkDelete(Math.min(amt, 100));
+        return int.reply({ content: `🧹 Cleared ${amt} messages.`, ephemeral: true });
     }
 
-    if (int.commandName === 'audit') {
-        await int.deferReply({ ephemeral: true });
-        const hooks = await int.guild.fetchWebhooks();
-        return int.editReply(`🛡️ **Audit:** ${hooks.size} Webhooks | ${int.guild.members.cache.filter(m => m.permissions.has(PermissionsBitField.Flags.Administrator)).size} Admins.`);
+    if (int.commandName === 'role') {
+        const member = int.options.getMember('user');
+        const role = int.options.getRole('role');
+        if (member.roles.cache.has(role.id)) await member.roles.remove(role);
+        else await member.roles.add(role);
+        return int.reply(`✅ Updated roles for ${member.user.tag}`);
     }
 });
 
-// ===== 🤖 AUTOMATED SECURITY LAYERS =====
+// --- SECURITY LOGIC ---
 
+// Merged Member Add (Age Gate + Scam Names + Raid)
 client.on('guildMemberAdd', async (member) => {
     const config = db.get(member.guild.id) || DEFAULT_CONFIG;
     const now = Date.now();
     
+    const badNames = ["discord.gg/", "free-nitro", "nuke-bot"];
+    if (badNames.some(n => member.user.username.toLowerCase().includes(n))) return member.ban({ reason: "Scam Name" });
+
     const age = (now - member.user.createdTimestamp) / (1000 * 60 * 60 * 24);
-    if (age < config.minAge) return member.kick("CyberShield: Age Gate").catch(() => null);
+    if (age < config.minAge) return member.kick("Age Gate");
 
     joinTracker.push(now);
-    // Cleanup old joins to prevent memory leaks
-    if (joinTracker.filter(t => t > now - 10000).length > config.joinLimit) {
-        return member.kick("CyberShield: Raid Mitigation").catch(() => null);
-    }
+    if (joinTracker.filter(t => t > now - 10000).length > config.joinLimit) return member.kick("Raid Protection");
 });
 
+// Merged Message (Spam + Caps + Mentions + Invites)
 client.on('messageCreate', async (msg) => {
     if (!msg.guild || msg.author.bot) return;
     const config = db.get(msg.guild.id) || DEFAULT_CONFIG;
-    if (msg.author.id === msg.guild.ownerId || (config.managerRole && msg.member.roles.cache.has(config.managerRole))) return;
+    if (WHITELIST.includes(msg.author.id) || msg.author.id === msg.guild.ownerId) return;
 
-    if (config.antiInvite && /discord\.(gg|com\/invite)/i.test(msg.content)) {
-        return msg.delete().catch(() => null);
+    if (msg.mentions.users.size > 5 || msg.content.includes('@everyone')) {
+        await msg.delete();
+        return msg.member.timeout(3600000, "Mass Mention");
+    }
+
+    if (config.antiInvite && /discord\.(gg|com\/invite)/i.test(msg.content)) return msg.delete();
+
+    if (msg.content.length > 15) {
+        const caps = msg.content.replace(/[^A-Z]/g, "").length;
+        if (caps / msg.content.length > 0.8) return msg.delete();
     }
 
     let userData = msgTracker.get(msg.author.id) || { count: 0, last: Date.now() };
-    const now = Date.now();
-    if (now - userData.last < 3000) userData.count++;
+    if (Date.now() - userData.last < 3000) userData.count++;
     else userData.count = 1;
-    userData.last = now;
+    userData.last = Date.now();
     msgTracker.set(msg.author.id, userData);
 
     if (userData.count >= config.spamLimit) {
-        await msg.delete().catch(() => null);
-        await msg.member.timeout(600000, "CyberShield: Anti-Spam").catch(() => null);
+        await msg.delete();
+        await msg.member.timeout(600000, "Spamming");
     }
 });
 
-const checkNuke = async (guild, userId, action) => {
-    if (!guild || !userId) return;
-    const config = db.get(guild.id) || DEFAULT_CONFIG;
-    if (userId === guild.ownerId || WHITELIST.includes(userId)) return;
+// Auto-Restore Logic
+client.on('channelDelete', async (ch) => {
+    const logs = await ch.guild.fetchAuditLogs({ limit: 1, type: AuditLogEvent.ChannelDelete });
+    const exec = logs.entries.first()?.executor;
+    if (exec && (WHITELIST.includes(exec.id) || exec.id === ch.guild.ownerId)) return;
 
-    let data = nukeTracker.get(userId) || { count: 0, last: Date.now() };
-    const now = Date.now();
-    if (now - data.last < 10000) data.count++;
-    else data.count = 1;
-    data.last = now;
-    nukeTracker.set(userId, data);
-
-    if (data.count >= config.nukeLimit) {
-        const member = await guild.members.fetch(userId).catch(() => null);
-        if (member) await member.roles.set([]).catch(() => null);
-        const logCh = guild.channels.cache.get(config.logs);
-        logCh?.send(`🚨 **CyberShield:** Admin <@${userId}> restricted for mass **${action}**.`);
-    }
-};
-
-client.on('channelDelete', (ch) => ch.guild.fetchAuditLogs({ limit: 1, type: AuditLogEvent.ChannelDelete }).then(a => checkNuke(ch.guild, a.entries.first()?.executor.id, "Channel Deletion")));
-client.on('roleDelete', (r) => r.guild.fetchAuditLogs({ limit: 1, type: AuditLogEvent.RoleDelete }).then(a => checkNuke(r.guild, a.entries.first()?.executor.id, "Role Deletion")));
+    await ch.guild.channels.create({
+        name: ch.name, type: ch.type, parent: ch.parentId,
+        permissionOverwrites: ch.permissionOverwrites.cache.map(p => ({ id: p.id, allow: p.allow, deny: p.deny }))
+    });
+});
 
 client.once('ready', async () => {
-    try {
-        const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
-        await rest.put(Routes.applicationCommands('1491381996025413764'), { body: commands });
-        console.log("🛡️ CyberShield Complete Edition: Online");
-    } catch (error) {
-        console.error("Command Registration Error:", error);
-    }
+    const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
+    await rest.put(Routes.applicationCommands('1491381996025413764'), { body: commands });
+    console.log("🛡️ CyberShield Online");
 });
 
 client.on('guildCreate', async (guild) => {
-    const welcomeChannel = guild.systemChannel || guild.channels.cache.find(ch => 
-        ch.type === ChannelType.GuildText && ch.permissionsFor(guild.members.me).has(PermissionsBitField.Flags.SendMessages)
-    );
-
-    client.on('guildCreate', async (guild) => {
-    // Finds the best channel to send the welcome message
-    const welcomeChannel = guild.systemChannel || guild.channels.cache.find(ch => 
-        ch.type === ChannelType.GuildText && ch.permissionsFor(guild.members.me).has(PermissionsBitField.Flags.SendMessages)
-    );
-
-    if (welcomeChannel) {
-        welcomeChannel.send(
-            `Hello **${guild.name}**, I'm your new security bot! \n\n` +
-            `**IMPORTANT:** Use \`/setup\` and \`/settings\` to configure me. \n` +
-            `I come packed with features like **Anti-Raid** and **Anti-Spam** to keep your community safe. \n\n` +
-            `Once you've finished setting up, check out our dashboard here: https://cyber-shield-gray.vercel.app`
-        );
-    }
+    const welcomeChannel = guild.systemChannel || guild.channels.cache.find(ch => ch.type === ChannelType.GuildText && ch.permissionsFor(guild.members.me).has(PermissionsBitField.Flags.SendMessages));
+    if (welcomeChannel) welcomeChannel.send(`Hello **${guild.name}**, I'm your new security bot! \n**IMPORTANT:** Use \`/setup\` and \`/settings\` to configure me, please not that only the owner can run the /setup command for security reasons, when settign up you can choose a Administrator role to run the rest of the commands. \nCheck us out: https://cyber-shield-gray.vercel.app`);
 });
- 
 
 client.login(process.env.TOKEN);
