@@ -43,35 +43,23 @@ const client = new Client({
         GatewayIntentBits.GuildMembers,
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent,
-        GatewayIntentBits.GuildModeration
+        GatewayIntentBits.GuildModeration,
+        GatewayIntentBits.GuildMessageReactions
     ],
     partials: [Partials.Channel, Partials.Message, Partials.GuildMember]
 });
 
-// In-memory per-session config
 const guildConfig = new Collection();
-/*
-cfg = {
-  staffRoleId: string|null,
-  logChannelId: string|null,
-  quarantineRoleId: string|null,
-  quarantineChannelId: string|null,
-  unquarantineRequestsChannelId: string|null,
-  frozen: { server: bool, channels: Set<string> },
-  welcome: {
-    enabled: boolean,
-    channelId: string|null,
-    style: 'short'|'normal'|'detailed',
-    customText: string|null,
-    maxLines: number
-  }
-}
-*/
+const spamTracker = new Collection();
+const raidTracker = new Collection();
+const channelCreateTracker = new Collection();
+const roleCreateTracker = new Collection();
+const emojiCreateTracker = new Collection();
+const threadCreateTracker = new Collection();
+const webhookCreateTracker = new Collection();
+const panelEditSessions = new Collection();
 
-const spamTracker = new Collection(); // key: guildId-userId -> timestamps[]
-const raidTracker = new Collection(); // guildId -> timestamps[]
 const WHITELIST = ["876731494805155851"]; // your IDs here
-
 const WEBSITE_URL = "https://cyber-shield-gray.vercel.app/";
 
 // -----------------------
@@ -100,8 +88,7 @@ const commands = [
             o.setName("reason")
              .setDescription("Reason for kick")
              .setRequired(false)
-        )
-        .setDefaultMemberPermissions(PermissionFlagsBits.KickMembers),
+        ),
 
     new SlashCommandBuilder()
         .setName("ban")
@@ -115,8 +102,7 @@ const commands = [
             o.setName("reason")
              .setDescription("Reason for ban")
              .setRequired(false)
-        )
-        .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers),
+        ),
 
     new SlashCommandBuilder()
         .setName("purge")
@@ -125,8 +111,7 @@ const commands = [
             o.setName("amount")
              .setDescription("Number of messages (1-100)")
              .setRequired(true)
-        )
-        .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages),
+        ),
 
     new SlashCommandBuilder()
         .setName("freeze")
@@ -139,8 +124,7 @@ const commands = [
                 { name: "Channel", value: "channel" },
                 { name: "Server", value: "server" }
              )
-        )
-        .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels),
+        ),
 
     new SlashCommandBuilder()
         .setName("unfreeze")
@@ -153,8 +137,7 @@ const commands = [
                 { name: "Channel", value: "channel" },
                 { name: "Server", value: "server" }
              )
-        )
-        .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels),
+        ),
 
     new SlashCommandBuilder()
         .setName("roleadd")
@@ -168,8 +151,7 @@ const commands = [
             o.setName("role")
              .setDescription("Role to give")
              .setRequired(true)
-        )
-        .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles),
+        ),
 
     new SlashCommandBuilder()
         .setName("roleremove")
@@ -183,8 +165,7 @@ const commands = [
             o.setName("role")
              .setDescription("Role to remove")
              .setRequired(true)
-        )
-        .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles),
+        ),
 
     new SlashCommandBuilder()
         .setName("welcomeconfig")
@@ -218,8 +199,7 @@ const commands = [
             o.setName("enabled")
              .setDescription("Enable or disable welcome messages")
              .setRequired(false)
-        )
-        .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+        ),
 
     new SlashCommandBuilder()
         .setName("quarantine")
@@ -233,8 +213,7 @@ const commands = [
             o.setName("reason")
              .setDescription("Reason for quarantine")
              .setRequired(false)
-        )
-        .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
+        ),
 
     new SlashCommandBuilder()
         .setName("unquarantine")
@@ -248,8 +227,7 @@ const commands = [
             o.setName("reason")
              .setDescription("Reason for unquarantine")
              .setRequired(false)
-        )
-        .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
+        ),
 
     new SlashCommandBuilder()
         .setName("unquarantine_request")
@@ -258,11 +236,15 @@ const commands = [
             o.setName("reason")
              .setDescription("Explain why you should be unquarantined")
              .setRequired(true)
-        )
+        ),
+
+    new SlashCommandBuilder()
+        .setName("shieldpanel")
+        .setDescription("Open the CyberShield settings dashboard")
 ].map(c => c.toJSON());
 
 // -----------------------
-// 4. Helper: Get/Init Config
+// 4. Config & Helpers
 // -----------------------
 function getGuildConfig(guild) {
     let cfg = guildConfig.get(guild.id);
@@ -283,20 +265,32 @@ function getGuildConfig(guild) {
                 style: "normal",
                 customText: null,
                 maxLines: 8
-            }
+            },
+            security: {
+                antiSpamEnabled: true,
+                spamMessages: 5,
+                spamWindowMs: 3000,
+                antiMassMentionEnabled: true,
+                antiBotJoinEnabled: true,
+                antiAttachmentEnabled: true,
+                antiChannelSpamEnabled: true,
+                antiRoleSpamEnabled: true,
+                antiEmojiSpamEnabled: true,
+                antiWebhookSpamEnabled: true,
+                antiThreadSpamEnabled: true,
+                antiGhostPingEnabled: true
+            },
+            roleHistory: new Map()
         };
         guildConfig.set(guild.id, cfg);
     }
     return cfg;
 }
 
-// -----------------------
-// 5. Logging Helper (Priority)
-// -----------------------
 function getPriorityColor(priority) {
     if (priority === "high") return 0xff0000;
     if (priority === "low") return 0x57f287;
-    return 0xf1c40f; // medium
+    return 0xf1c40f;
 }
 
 async function sendLog(guild, title, desc, user = null, priority = "medium") {
@@ -318,13 +312,226 @@ async function sendLog(guild, title, desc, user = null, priority = "medium") {
     await channel.send({ embeds: [embed] }).catch(() => null);
 }
 
-// Helper: send public notice that auto-deletes after 4 minutes
+// public mini-alert (thread-style) with clickable logs link
+async function sendPublicAlert(channel, guild, summary) {
+    const cfg = getGuildConfig(guild);
+    if (!cfg.logChannelId) return;
+
+    const lines = [
+        "**CyberShield Alert**",
+        summary,
+        "",
+        `View full details in <#${cfg.logChannelId}>`
+    ];
+
+    const embed = new EmbedBuilder()
+        .setDescription(lines.join("\n"))
+        .setColor(0x5865f2)
+        .setTimestamp();
+
+    const msg = await channel.send({ embeds: [embed] }).catch(() => null);
+    if (!msg) return;
+    setTimeout(() => msg.delete().catch(() => null), 4 * 60 * 1000);
+}
+
+// generic temp notice (simple text)
 async function sendTempNotice(channel, content, options = {}) {
     const msg = await channel.send({ content, ...options }).catch(() => null);
     if (!msg) return;
-    setTimeout(() => {
-        msg.delete().catch(() => null);
-    }, 4 * 60 * 1000);
+    setTimeout(() => msg.delete().catch(() => null), 4 * 60 * 1000);
+}
+
+// role history helpers
+function saveRoleHistory(cfg, member) {
+    const roles = member.roles.cache
+        .filter(r => r.id !== member.guild.id)
+        .map(r => r.id);
+    cfg.roleHistory.set(member.id, roles);
+}
+
+async function restoreRoleHistory(cfg, member) {
+    const roles = cfg.roleHistory.get(member.id);
+    if (!roles || !roles.length) return;
+    const guild = member.guild;
+    const validRoles = roles
+        .map(id => guild.roles.cache.get(id))
+        .filter(r => !!r);
+    for (const role of validRoles) {
+        await member.roles.add(role).catch(() => null);
+    }
+    cfg.roleHistory.delete(member.id);
+}
+
+// quarantine apply + info message
+async function applyQuarantine(cfg, member, mode = "auto") {
+    const guild = member.guild;
+    const qRole = guild.roles.cache.get(cfg.quarantineRoleId);
+    const qChannel = guild.channels.cache.get(cfg.quarantineChannelId);
+    if (!qRole || !qChannel) return;
+
+    saveRoleHistory(cfg, member);
+
+    const rolesToRemove = member.roles.cache.filter(r => r.id !== guild.id && r.id !== qRole.id);
+    for (const role of rolesToRemove.values()) {
+        await member.roles.remove(role).catch(() => null);
+    }
+    if (!member.roles.cache.has(qRole.id)) {
+        await member.roles.add(qRole).catch(() => null);
+    }
+
+    // quarantine info message (thread-style)
+    let lines;
+    if (mode === "auto") {
+        // Tone A - strict & professional
+        lines = [
+            "**Quarantine Notice**",
+            "You have been placed in quarantine due to security concerns.",
+            "This action was taken automatically by CyberShield.",
+            "",
+            "What this means:",
+            "- Your access to the server is temporarily restricted.",
+            "- Staff will review your account and activity.",
+            "",
+            "What you should do now:",
+            "- Stay in this channel and read any messages from staff.",
+            "- Use `/unquarantine_request` to explain why you should be reviewed.",
+            "",
+            "Staff will typically look at:",
+            "- Account age and history.",
+            "- Recent behaviour and messages.",
+            "- Any links, invites or suspicious activity.",
+            "",
+            `For more information about CyberShield, visit: ${WEBSITE_URL}`
+        ];
+    } else {
+        // Tone B - neutral & informative
+        lines = [
+            "**Quarantine Notice**",
+            "You’re currently in quarantine.",
+            "A staff member placed you here for security review.",
+            "",
+            "What this means:",
+            "- Your access to the server is limited while checks are done.",
+            "- This is not a permanent punishment unless staff decide so.",
+            "",
+            "What you should do now:",
+            "- Stay respectful and follow any instructions from staff.",
+            "- Use `/unquarantine_request` in this channel to explain your situation.",
+            "",
+            "Helpful tips:",
+            "- Be honest and clear in your request.",
+            "- Mention if you joined for a specific reason (friend, event, etc.).",
+            "",
+            `CyberShield is protecting this server. Learn more: ${WEBSITE_URL}`
+        ];
+    }
+
+    const embed = new EmbedBuilder()
+        .setDescription(lines.join("\n"))
+        .setColor(0xff0000)
+        .setTimestamp();
+
+    const msg = await qChannel.send({ content: `${member}`, embeds: [embed] }).catch(() => null);
+    if (msg) {
+        setTimeout(() => msg.delete().catch(() => null), 4 * 60 * 1000);
+    }
+}
+
+// -----------------------
+// 5. Settings Dashboard Helpers
+// -----------------------
+function buildSecuritySummary(security) {
+    return [
+        `Anti-Spam: ${security.antiSpamEnabled ? "On" : "Off"} (${security.spamMessages} msgs / ${security.spamWindowMs / 1000}s)`,
+        `Anti-Mass-Mention: ${security.antiMassMentionEnabled ? "On" : "Off"}`,
+        `Anti-Bot-Join: ${security.antiBotJoinEnabled ? "On" : "Off"}`,
+        `Anti-Attachment: ${security.antiAttachmentEnabled ? "On" : "Off"}`,
+        `Anti-Channel-Spam: ${security.antiChannelSpamEnabled ? "On" : "Off"}`,
+        `Anti-Role-Spam: ${security.antiRoleSpamEnabled ? "On" : "Off"}`,
+        `Anti-Emoji-Spam: ${security.antiEmojiSpamEnabled ? "On" : "Off"}`,
+        `Anti-Webhook-Spam: ${security.antiWebhookSpamEnabled ? "On" : "Off"}`,
+        `Anti-Thread-Spam: ${security.antiThreadSpamEnabled ? "On" : "Off"}`,
+        `Anti-Ghost-Ping: ${security.antiGhostPingEnabled ? "On" : "Off"}`
+    ].join("\n");
+}
+
+function buildPanelEmbed(guild, cfg, editing = false, draftSecurity = null) {
+    const sec = draftSecurity || cfg.security;
+    const lines = [
+        "Recommended settings:",
+        "- Anti-Spam: On (5 msgs / 3s)",
+        "- Anti-Mass-Mention: On",
+        "- Anti-Bot-Join: On",
+        "- Anti-Attachment: On",
+        "- Anti-Channel/Role/Emoji/Webhook/Thread Spam: On",
+        "- Anti-Ghost-Ping: On",
+        "",
+        `Website: ${WEBSITE_URL}`
+    ];
+
+    return new EmbedBuilder()
+        .setTitle(`CyberShield Settings Dashboard${editing ? " (Editing)" : ""}`)
+        .setDescription(lines.join("\n"))
+        .addFields({
+            name: "Current Security Profile",
+            value: buildSecuritySummary(sec)
+        })
+        .setColor(editing ? 0xf1c40f : 0x57f287)
+        .setTimestamp();
+}
+
+function buildPanelButtons(editing = false) {
+    if (!editing) {
+        return [
+            new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId("panel_edit")
+                    .setLabel("Edit")
+                    .setStyle(ButtonStyle.Primary)
+            )
+        ];
+    }
+
+    return [
+        new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+                .setCustomId("panel_toggle_antispam")
+                .setLabel("Toggle Anti-Spam")
+                .setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder()
+                .setCustomId("panel_spam_minus")
+                .setLabel("- Spam Msgs")
+                .setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder()
+                .setCustomId("panel_spam_plus")
+                .setLabel("+ Spam Msgs")
+                .setStyle(ButtonStyle.Secondary)
+        ),
+        new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+                .setCustomId("panel_toggle_massmention")
+                .setLabel("Toggle Anti-Mass-Mention")
+                .setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder()
+                .setCustomId("panel_toggle_attachment")
+                .setLabel("Toggle Anti-Attachment")
+                .setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder()
+                .setCustomId("panel_toggle_botjoin")
+                .setLabel("Toggle Anti-Bot-Join")
+                .setStyle(ButtonStyle.Secondary)
+        ),
+        new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+                .setCustomId("panel_save")
+                .setLabel("Save")
+                .setStyle(ButtonStyle.Success),
+            new ButtonBuilder()
+                .setCustomId("panel_cancel")
+                .setLabel("Cancel")
+                .setStyle(ButtonStyle.Danger)
+        )
+    ];
 }
 
 // -----------------------
@@ -357,7 +564,7 @@ client.on("guildCreate", async (guild) => {
         "Recommended settings:",
         "- Give CyberShield Administrator or strong moderation permissions.",
         "- Run /setup to link your staff role and create logs and quarantine.",
-        "- Keep Anti-Raid, Anti-Nuke, Anti-Spam and Webhook Guard enabled.",
+        "- Keep Anti-Raid, Anti-Nuke, Anti-Spam, Anti-Mass-Mention and Webhook Guard enabled.",
         "",
         "Core protections:",
         "- Raid detection and automatic server freeze.",
@@ -381,7 +588,7 @@ client.on("guildCreate", async (guild) => {
 });
 
 // -----------------------
-// 7. Interaction Handler (Slash Commands + Buttons)
+// 7. Interaction Handler
 // -----------------------
 client.on("interactionCreate", async (int) => {
     if (int.isButton()) {
@@ -394,28 +601,26 @@ client.on("interactionCreate", async (int) => {
 
     const isOwner = int.user.id === int.guild.ownerId;
     const isWhitelisted = WHITELIST.includes(int.user.id);
-    const isStaff = cfg.staffRoleId && int.member.roles.cache.has(cfg.staffRoleId);
     const isAdminPerm = int.member.permissions.has(PermissionFlagsBits.Administrator);
+    const isStaff = cfg.staffRoleId && int.member.roles.cache.has(cfg.staffRoleId);
 
     const staffCommands = [
         "kick", "ban", "purge", "freeze", "unfreeze",
         "roleadd", "roleremove", "welcomeconfig",
-        "quarantine", "unquarantine"
+        "quarantine", "unquarantine", "unquarantine_request",
+        "shieldpanel"
     ];
 
     const isSetup = int.commandName === "setup";
     const isStaffCommand = staffCommands.includes(int.commandName);
 
-    // Permission logic:
-    // - /setup: owner OR whitelist OR Administrator
-    // - other staff commands: owner OR whitelist OR Administrator OR staffRole
     if (isSetup) {
         if (!(isOwner || isWhitelisted || isAdminPerm)) {
             return int.reply({ content: "❌ You are not authorized to use /setup.", ephemeral: true });
         }
     } else if (isStaffCommand) {
-        if (!(isOwner || isWhitelisted || isAdminPerm || isStaff)) {
-            return int.reply({ content: "❌ You are not authorized to use this command.", ephemeral: true });
+        if (!(isOwner || isWhitelisted || isStaff)) {
+            return int.reply({ content: "❌ You must have the staff role to use this command.", ephemeral: true });
         }
     }
 
@@ -423,7 +628,6 @@ client.on("interactionCreate", async (int) => {
         if (int.commandName === "setup") {
             const role = int.options.getRole("staff_role");
 
-            // Create or find log channel
             let logChannel = int.guild.channels.cache.find(
                 c => c.name === "shield-logs" && c.type === ChannelType.GuildText
             );
@@ -435,12 +639,15 @@ client.on("interactionCreate", async (int) => {
                         {
                             id: int.guild.roles.everyone.id,
                             deny: [PermissionsBitField.Flags.ViewChannel]
+                        },
+                        {
+                            id: role.id,
+                            allow: [PermissionsBitField.Flags.ViewChannel]
                         }
                     ]
                 });
             }
 
-            // Create or find quarantine role
             let qRole = int.guild.roles.cache.find(r => r.name === "Quarantined");
             if (!qRole) {
                 qRole = await int.guild.roles.create({
@@ -450,7 +657,6 @@ client.on("interactionCreate", async (int) => {
                 });
             }
 
-            // Create or find quarantine channel
             let qChannel = int.guild.channels.cache.find(
                 c => c.name === "quarantine-hold" && c.type === ChannelType.GuildText
             );
@@ -466,12 +672,15 @@ client.on("interactionCreate", async (int) => {
                         {
                             id: qRole.id,
                             allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages]
+                        },
+                        {
+                            id: role.id,
+                            allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages]
                         }
                     ]
                 });
             }
 
-            // Create or find unquarantine-requests channel
             let reqChannel = int.guild.channels.cache.find(
                 c => c.name === "unquarantine-requests" && c.type === ChannelType.GuildText
             );
@@ -519,7 +728,7 @@ client.on("interactionCreate", async (int) => {
 
             await target.kick(reason);
             await int.reply(`Kicked ${target.user.tag}\nReason: ${reason}`);
-            await sendLog(int.guild, "User Kicked", `${target.user.tag} was kicked by ${int.user.tag}\nReason: ${reason}`, target.user, "medium");
+            await sendLog(int.guild, "User Kicked", `${target.user.tag} was kicked by ${int.user.tag}\nReason: ${reason}`, target.user, "low");
         }
 
         if (int.commandName === "ban") {
@@ -667,16 +876,15 @@ client.on("interactionCreate", async (int) => {
                 return int.reply({ content: "Quarantine system is not configured. Run /setup.", ephemeral: true });
             }
 
-            const qRole = int.guild.roles.cache.get(cfg.quarantineRoleId);
             const qChannel = int.guild.channels.cache.get(cfg.quarantineChannelId);
 
-            if (!member || !qRole || !qChannel) {
+            if (!member || !qChannel) {
                 return int.reply({ content: "Quarantine role or channel is missing.", ephemeral: true });
             }
 
-            await member.roles.add(qRole).catch(() => null);
+            await applyQuarantine(cfg, member, "staff");
             await qChannel.send(
-                `${member} has been placed in quarantine. Reason: ${reason}`
+                `${member} has been placed in quarantine by staff. Reason: ${reason}`
             ).catch(() => null);
 
             await int.reply(`User ${member.user.tag} has been quarantined.`);
@@ -697,13 +905,13 @@ client.on("interactionCreate", async (int) => {
             }
 
             await member.roles.remove(qRole).catch(() => null);
+            await restoreRoleHistory(cfg, member);
+
             await int.reply(`User ${member.user.tag} has been unquarantined.`);
             await sendLog(int.guild, "User Unquarantined", `${member.user.tag} unquarantined by ${int.user.tag}\nReason: ${reason}`, member.user, "medium");
         }
 
         if (int.commandName === "unquarantine_request") {
-            const cfg = getGuildConfig(int.guild);
-
             if (!cfg.quarantineRoleId || !cfg.quarantineChannelId || !cfg.unquarantineRequestsChannelId) {
                 return int.reply({ content: "Quarantine system is not configured. Ask staff to run /setup.", ephemeral: true });
             }
@@ -760,6 +968,12 @@ client.on("interactionCreate", async (int) => {
             await int.reply({ content: "Your unquarantine request has been sent to staff.", ephemeral: true });
             await sendLog(int.guild, "Unquarantine Request", `${int.user.tag} submitted an unquarantine request.`, int.user, "medium");
         }
+
+        if (int.commandName === "shieldpanel") {
+            const embed = buildPanelEmbed(int.guild, cfg, false);
+            const rows = buildPanelButtons(false);
+            await int.reply({ embeds: [embed], components: rows, ephemeral: true });
+        }
     } catch (err) {
         console.error(err);
         if (!int.replied) {
@@ -768,7 +982,9 @@ client.on("interactionCreate", async (int) => {
     }
 });
 
-// Button handler for unquarantine requests
+// -----------------------
+// 8. Button Handler
+// -----------------------
 async function handleButtonInteraction(int) {
     if (!int.guild) return;
     const cfg = getGuildConfig(int.guild);
@@ -776,10 +992,69 @@ async function handleButtonInteraction(int) {
     const isOwner = int.user.id === int.guild.ownerId;
     const isWhitelisted = WHITELIST.includes(int.user.id);
     const isStaff = cfg.staffRoleId && int.member.roles.cache.has(cfg.staffRoleId);
-    const isAdminPerm = int.member.permissions.has(PermissionFlagsBits.Administrator);
 
-    if (!(isOwner || isWhitelisted || isAdminPerm || isStaff)) {
-        return int.reply({ content: "❌ You are not authorized to handle this request.", ephemeral: true });
+    if (!(isOwner || isWhitelisted || isStaff)) {
+        return int.reply({ content: "❌ You are not authorized to use this.", ephemeral: true });
+    }
+
+    if (int.customId.startsWith("panel_")) {
+        const key = `${int.guild.id}-${int.user.id}`;
+        let session = panelEditSessions.get(key);
+
+        if (int.customId === "panel_edit") {
+            session = {
+                draftSecurity: { ...cfg.security }
+            };
+            panelEditSessions.set(key, session);
+            const embed = buildPanelEmbed(int.guild, cfg, true, session.draftSecurity);
+            const rows = buildPanelButtons(true);
+            return int.update({ embeds: [embed], components: rows });
+        }
+
+        if (!session) {
+            return int.reply({ content: "No active edit session. Use /shieldpanel again.", ephemeral: true });
+        }
+
+        const sec = session.draftSecurity;
+
+        if (int.customId === "panel_toggle_antispam") {
+            sec.antiSpamEnabled = !sec.antiSpamEnabled;
+        }
+        if (int.customId === "panel_spam_minus") {
+            sec.spamMessages = Math.max(2, sec.spamMessages - 1);
+        }
+        if (int.customId === "panel_spam_plus") {
+            sec.spamMessages = Math.min(20, sec.spamMessages + 1);
+        }
+        if (int.customId === "panel_toggle_massmention") {
+            sec.antiMassMentionEnabled = !sec.antiMassMentionEnabled;
+        }
+        if (int.customId === "panel_toggle_attachment") {
+            sec.antiAttachmentEnabled = !sec.antiAttachmentEnabled;
+        }
+        if (int.customId === "panel_toggle_botjoin") {
+            sec.antiBotJoinEnabled = !sec.antiBotJoinEnabled;
+        }
+
+        if (int.customId === "panel_save") {
+            cfg.security = { ...sec };
+            guildConfig.set(int.guild.id, cfg);
+            panelEditSessions.delete(key);
+            const embed = buildPanelEmbed(int.guild, cfg, false);
+            const rows = buildPanelButtons(false);
+            return int.update({ embeds: [embed], components: rows });
+        }
+
+        if (int.customId === "panel_cancel") {
+            panelEditSessions.delete(key);
+            const embed = buildPanelEmbed(int.guild, cfg, false);
+            const rows = buildPanelButtons(false);
+            return int.update({ embeds: [embed], components: rows });
+        }
+
+        const embed = buildPanelEmbed(int.guild, cfg, true, sec);
+        const rows = buildPanelButtons(true);
+        return int.update({ embeds: [embed], components: rows });
     }
 
     const [prefix, action, userId] = int.customId.split("_");
@@ -801,6 +1076,7 @@ async function handleButtonInteraction(int) {
 
     if (action === "accept") {
         await member.roles.remove(qRole).catch(() => null);
+        await restoreRoleHistory(cfg, member);
         await int.update({
             content: `Request accepted by ${int.user.tag}. User has been unquarantined.`,
             components: []
@@ -814,10 +1090,36 @@ async function handleButtonInteraction(int) {
             "medium"
         );
     } else if (action === "reject") {
+        await applyQuarantine(cfg, member, "staff");
         await int.update({
             content: `Request rejected by ${int.user.tag}. User remains quarantined.`,
             components: []
         }).catch(() => null);
+
+        const qChannel = int.guild.channels.cache.get(cfg.quarantineChannelId);
+        if (qChannel) {
+            const lines = [
+                "**Quarantine Update**",
+                "Your unquarantine request was reviewed and rejected by staff.",
+                "",
+                "What you can do:",
+                "- Wait some time before submitting another request.",
+                "- Make sure you follow all server rules.",
+                "- Avoid any behaviour that looks like spam, raids or advertising.",
+                "",
+                "If you believe this is a mistake, explain clearly in your next request.",
+                `CyberShield is protecting this server. More info: ${WEBSITE_URL}`
+            ];
+            const embed = new EmbedBuilder()
+                .setDescription(lines.join("\n"))
+                .setColor(0xf1c40f)
+                .setTimestamp();
+
+            const msg = await qChannel.send({ content: `${member}`, embeds: [embed] }).catch(() => null);
+            if (msg) {
+                setTimeout(() => msg.delete().catch(() => null), 4 * 60 * 1000);
+            }
+        }
 
         await sendLog(
             int.guild,
@@ -830,34 +1132,48 @@ async function handleButtonInteraction(int) {
 }
 
 // -----------------------
-// 8. Welcome System (Member Join)
+// 9. Welcome System & Joins
 // -----------------------
 client.on("guildMemberAdd", async (member) => {
     const guild = member.guild;
     const cfg = getGuildConfig(guild);
+
+    // Anti-Bot-Join
+    if (member.user.bot && cfg.security.antiBotJoinEnabled) {
+        if (!WHITELIST.includes(member.user.id)) {
+            await member.kick("Anti-Bot-Join: Bot not whitelisted").catch(() => null);
+            await sendLog(
+                guild,
+                "Anti-Bot-Join",
+                `Blocked bot ${member.user.tag} from joining (not whitelisted).`,
+                member.user,
+                "high"
+            );
+            const ch = guild.systemChannel;
+            if (ch) {
+                await sendPublicAlert(
+                    ch,
+                    guild,
+                    "Anti-Bot-Join: A bot was blocked from joining. View full details in the logs."
+                );
+            }
+            return;
+        }
+    }
 
     // Auto-Quarantine + Age Gate (3 days)
     const accountAgeMs = Date.now() - member.user.createdTimestamp;
     const threeDaysMs = 3 * 24 * 60 * 60 * 1000;
 
     if (accountAgeMs < threeDaysMs && cfg.quarantineRoleId && cfg.quarantineChannelId) {
-        const qRole = guild.roles.cache.get(cfg.quarantineRoleId);
-        const qChannel = guild.channels.cache.get(cfg.quarantineChannelId);
-
-        if (qRole && qChannel) {
-            await member.roles.add(qRole).catch(() => null);
-            await qChannel.send(
-                `${member} has been placed in quarantine (account too new). A staff member will review you.`
-            ).catch(() => null);
-
-            await sendLog(
-                guild,
-                "Auto-Quarantine",
-                `New account ${member.user.tag} placed in quarantine (account under 3 days).`,
-                member.user,
-                "medium"
-            );
-        }
+        await applyQuarantine(cfg, member, "auto");
+        await sendLog(
+            guild,
+            "Auto-Quarantine",
+            `New account ${member.user.tag} placed in quarantine (account under 3 days).`,
+            member.user,
+            "medium"
+        );
     }
 
     if (!cfg.welcome.enabled) return;
@@ -920,10 +1236,10 @@ client.on("guildMemberAdd", async (member) => {
 });
 
 // -----------------------
-// 9. Automated Security Systems
+// 10. Automated Security Systems
 // -----------------------
 
-// 9.1 Webhook Guard & Invite Shield (message-level)
+// 10.1 Webhook Guard & Invite Shield (message-level)
 client.on("messageCreate", async (msg) => {
     if (!msg.guild || msg.author.bot) return;
 
@@ -947,60 +1263,63 @@ client.on("messageCreate", async (msg) => {
             msg.author,
             "medium"
         );
-        await sendTempNotice(
+        await sendPublicAlert(
             msg.channel,
-            `A message from ${msg.author} was removed for containing a blocked ${hasWebhook ? "webhook" : "invite"} link.`
+            msg.guild,
+            hasWebhook
+                ? "Webhook Guard: A webhook link was blocked in this channel."
+                : "Invite Shield: An invite link was blocked in this channel."
         );
     }
 });
 
-// 9.2 Webhook Guard (creation-level)
-client.on("webhookUpdate", async (channel) => {
-    if (!channel.guild) return;
-    const guild = channel.guild;
-    const cfg = getGuildConfig(guild);
-
-    try {
-        const logs = await guild.fetchAuditLogs({ type: 50, limit: 1 }); // WEBHOOK_CREATE
-        const entry = logs.entries.first();
-        if (!entry) return;
-
-        const executor = entry.executor;
-        const isOwner = executor.id === guild.ownerId;
-        const isWhitelisted = WHITELIST.includes(executor.id);
-        const member = guild.members.cache.get(executor.id);
-        const isStaff = cfg.staffRoleId && member?.roles.cache.has(cfg.staffRoleId);
-
-        if (isOwner || isWhitelisted || isStaff) return;
-
-        const webhook = entry.target;
-        if (webhook && webhook.delete) {
-            await webhook.delete("Unauthorized webhook creation blocked by CyberShield").catch(() => null);
-        }
-
-        await sendLog(
-            guild,
-            "Webhook Guard",
-            `Unauthorized webhook created by ${executor.tag} in #${channel.name} was deleted.`,
-            executor,
-            "high"
-        );
-        if (channel.isTextBased()) {
-            await sendTempNotice(
-                channel,
-                "An unauthorized webhook was blocked in this channel."
-            );
-        }
-    } catch (err) {
-        console.error("Webhook Guard error:", err);
-    }
-});
-
-// 9.3 Anti-Spam (5 messages / 3s -> 10 min timeout)
+// 10.2 Anti-Attachment (new accounts or quarantined)
 client.on("messageCreate", async (msg) => {
     if (!msg.guild || msg.author.bot) return;
 
     const cfg = getGuildConfig(msg.guild);
+    if (!cfg.security.antiAttachmentEnabled) return;
+
+    const member = msg.member;
+    if (!member) return;
+
+    const isStaff = cfg.staffRoleId && member.roles.cache.has(cfg.staffRoleId);
+    const isOwner = msg.author.id === msg.guild.ownerId;
+    const isWhitelisted = WHITELIST.includes(msg.author.id);
+
+    if (isStaff || isOwner || isWhitelisted) return;
+
+    const hasAttachment = msg.attachments.size > 0;
+    if (!hasAttachment) return;
+
+    const accountAgeMs = Date.now() - msg.author.createdTimestamp;
+    const threeDaysMs = 3 * 24 * 60 * 60 * 1000;
+    const isQuarantined = cfg.quarantineRoleId && member.roles.cache.has(cfg.quarantineRoleId);
+
+    if (accountAgeMs < threeDaysMs || isQuarantined) {
+        await msg.delete().catch(() => null);
+        await sendLog(
+            msg.guild,
+            "Anti-Attachment",
+            `Deleted attachment from ${msg.author.tag} in #${msg.channel.name} (new or quarantined account).`,
+            msg.author,
+            "medium"
+        );
+        await sendPublicAlert(
+            msg.channel,
+            msg.guild,
+            "Anti-Attachment: A suspicious attachment was blocked in this channel."
+        );
+    }
+});
+
+// 10.3 Anti-Spam (configurable)
+client.on("messageCreate", async (msg) => {
+    if (!msg.guild || msg.author.bot) return;
+
+    const cfg = getGuildConfig(msg.guild);
+    if (!cfg.security.antiSpamEnabled) return;
+
     const isStaff = cfg.staffRoleId && msg.member?.roles.cache.has(cfg.staffRoleId);
     const isOwner = msg.author.id === msg.guild.ownerId;
     const isWhitelisted = WHITELIST.includes(msg.author.id);
@@ -1014,16 +1333,12 @@ client.on("messageCreate", async (msg) => {
     const timestamps = spamTracker.get(key);
     timestamps.push(now);
 
-    const filtered = timestamps.filter(t => now - t < 3000);
+    const filtered = timestamps.filter(t => now - t < cfg.security.spamWindowMs);
     spamTracker.set(key, filtered);
 
-    if (filtered.length >= 5) {
+    if (filtered.length >= cfg.security.spamMessages) {
         if (msg.member.moderatable) {
             await msg.member.timeout(10 * 60 * 1000, "Auto Anti-Spam").catch(() => null);
-            await sendTempNotice(
-                msg.channel,
-                `${msg.author} has been timed out for spamming (10 minutes).`
-            );
             await sendLog(
                 msg.guild,
                 "Anti-Spam Triggered",
@@ -1031,12 +1346,56 @@ client.on("messageCreate", async (msg) => {
                 msg.author,
                 "medium"
             );
+            await sendPublicAlert(
+                msg.channel,
+                msg.guild,
+                "Anti-Spam: A spam burst was detected and the user was timed out."
+            );
         }
         spamTracker.delete(key);
     }
 });
 
-// 9.4 Beast Mode (Raid Defense) - 8 joins / 10s -> auto-freeze server
+// 10.4 Anti-Mass-Mention
+client.on("messageCreate", async (msg) => {
+    if (!msg.guild || msg.author.bot) return;
+
+    const cfg = getGuildConfig(msg.guild);
+    if (!cfg.security.antiMassMentionEnabled) return;
+
+    const member = msg.member;
+    if (!member) return;
+
+    const isStaff = cfg.staffRoleId && member.roles.cache.has(cfg.staffRoleId);
+    const isOwner = msg.author.id === msg.guild.ownerId;
+    const isWhitelisted = WHITELIST.includes(msg.author.id);
+
+    if (isStaff || isOwner || isWhitelisted) return;
+
+    const mentionsEveryone = msg.mentions.everyone;
+    const userMentions = msg.mentions.users.size;
+
+    if (mentionsEveryone || userMentions >= 5) {
+        await msg.delete().catch(() => null);
+        if (member.moderatable) {
+            await member.timeout(10 * 60 * 1000, "Anti-Mass-Mention").catch(() => null);
+        }
+        await sendLog(
+            msg.guild,
+            "Anti-Mass-Mention",
+            `Message from ${msg.author.tag} deleted and user timed out for mass mention.`,
+            msg.author,
+            "high"
+        );
+        await sendPublicAlert(
+            msg.channel,
+            msg.guild,
+            "Anti-Mass-Mention: A mass mention attempt was blocked and the user was timed out."
+        );
+    }
+});
+
+// 10.5 Beast Mode (Raid Defense)
 client.on("guildMemberAdd", async (member) => {
     const guild = member.guild;
     const cfg = getGuildConfig(guild);
@@ -1069,22 +1428,23 @@ client.on("guildMemberAdd", async (member) => {
         );
         const systemChannel = guild.systemChannel;
         if (systemChannel) {
-            await sendTempNotice(
+            await sendPublicAlert(
                 systemChannel,
-                "Raid detected. Server has been automatically frozen. Use /unfreeze server when safe."
+                guild,
+                "Anti-Raid: A raid attempt was detected and the server was automatically frozen."
             );
         }
     }
 });
 
-// 9.5 Anti-Nuke (Channel Delete Protection + Rogue Staff Mitigation)
+// 10.6 Anti-Nuke
 client.on("channelDelete", async (channel) => {
     if (!channel.guild) return;
     const guild = channel.guild;
     const cfg = getGuildConfig(guild);
 
     try {
-        const logs = await guild.fetchAuditLogs({ type: 12, limit: 1 }); // CHANNEL_DELETE
+        const logs = await guild.fetchAuditLogs({ type: 12, limit: 1 });
         const entry = logs.entries.first();
         if (!entry) return;
 
@@ -1128,9 +1488,10 @@ client.on("channelDelete", async (channel) => {
         );
 
         if (newChannel && channel.isTextBased()) {
-            await sendTempNotice(
+            await sendPublicAlert(
                 newChannel,
-                "This channel was recreated by Anti-Nuke protection."
+                guild,
+                "Anti-Nuke: A channel deletion attack was blocked and the channel was recreated."
             );
         }
     } catch (err) {
@@ -1138,8 +1499,213 @@ client.on("channelDelete", async (channel) => {
     }
 });
 
+// 10.7 Anti-Channel-Spam
+client.on("channelCreate", async (channel) => {
+    if (!channel.guild) return;
+    const guild = channel.guild;
+    const cfg = getGuildConfig(guild);
+    if (!cfg.security.antiChannelSpamEnabled) return;
+
+    const now = Date.now();
+    const key = guild.id;
+
+    if (!channelCreateTracker.has(key)) channelCreateTracker.set(key, []);
+    const timestamps = channelCreateTracker.get(key);
+    timestamps.push(now);
+
+    const filtered = timestamps.filter(t => now - t < 10000);
+    channelCreateTracker.set(key, filtered);
+
+    if (filtered.length >= 10) {
+        await sendLog(
+            guild,
+            "Anti-Channel-Spam",
+            "High rate of channel creation detected.",
+            null,
+            "high"
+        );
+        if (channel.isTextBased()) {
+            await sendPublicAlert(
+                channel,
+                guild,
+                "Anti-Channel-Spam: Unusual channel creation activity was detected."
+            );
+        }
+    }
+});
+
+// 10.8 Anti-Role-Spam
+client.on("roleCreate", async (role) => {
+    const guild = role.guild;
+    const cfg = getGuildConfig(guild);
+    if (!cfg.security.antiRoleSpamEnabled) return;
+
+    const now = Date.now();
+    const key = guild.id;
+
+    if (!roleCreateTracker.has(key)) roleCreateTracker.set(key, []);
+    const timestamps = roleCreateTracker.get(key);
+    timestamps.push(now);
+
+    const filtered = timestamps.filter(t => now - t < 10000);
+    roleCreateTracker.set(key, filtered);
+
+    if (filtered.length >= 10) {
+        await sendLog(
+            guild,
+            "Anti-Role-Spam",
+            "High rate of role creation detected.",
+            null,
+            "high"
+        );
+    }
+});
+
+// 10.9 Anti-Emoji-Spam
+client.on("emojiCreate", async (emoji) => {
+    const guild = emoji.guild;
+    const cfg = getGuildConfig(guild);
+    if (!cfg.security.antiEmojiSpamEnabled) return;
+
+    const now = Date.now();
+    const key = guild.id;
+
+    if (!emojiCreateTracker.has(key)) emojiCreateTracker.set(key, []);
+    const timestamps = emojiCreateTracker.get(key);
+    timestamps.push(now);
+
+    const filtered = timestamps.filter(t => now - t < 10000);
+    emojiCreateTracker.set(key, filtered);
+
+    if (filtered.length >= 10) {
+        await sendLog(
+            guild,
+            "Anti-Emoji-Spam",
+            "High rate of emoji creation detected.",
+            null,
+            "high"
+        );
+    }
+});
+
+// 10.10 Anti-Webhook-Spam (creation-level)
+client.on("webhookUpdate", async (channel) => {
+    if (!channel.guild) return;
+    const guild = channel.guild;
+    const cfg = getGuildConfig(guild);
+    if (!cfg.security.antiWebhookSpamEnabled) return;
+
+    try {
+        const logs = await guild.fetchAuditLogs({ type: 50, limit: 1 });
+        const entry = logs.entries.first();
+        if (!entry) return;
+
+        const executor = entry.executor;
+        const isOwner = executor.id === guild.ownerId;
+        const isWhitelisted = WHITELIST.includes(executor.id);
+        const member = guild.members.cache.get(executor.id);
+        const isStaff = cfg.staffRoleId && member?.roles.cache.has(cfg.staffRoleId);
+
+        const now = Date.now();
+        const key = guild.id;
+        if (!webhookCreateTracker.has(key)) webhookCreateTracker.set(key, []);
+        const timestamps = webhookCreateTracker.get(key);
+        timestamps.push(now);
+        const filtered = timestamps.filter(t => now - t < 10000);
+        webhookCreateTracker.set(key, filtered);
+
+        const webhook = entry.target;
+        if (!isOwner && !isWhitelisted && !isStaff) {
+            if (webhook && webhook.delete) {
+                await webhook.delete("Unauthorized webhook creation blocked by CyberShield").catch(() => null);
+            }
+            await sendLog(
+                guild,
+                "Webhook Guard",
+                `Unauthorized webhook created by ${executor.tag} in #${channel.name} was deleted.`,
+                executor,
+                "high"
+            );
+            if (channel.isTextBased()) {
+                await sendPublicAlert(
+                    channel,
+                    guild,
+                    "Webhook Guard: An unauthorized webhook was removed from this channel."
+                );
+            }
+        }
+
+        if (filtered.length >= 5) {
+            await sendLog(
+                guild,
+                "Anti-Webhook-Spam",
+                "High rate of webhook creation detected.",
+                executor,
+                "high"
+            );
+        }
+    } catch (err) {
+        console.error("Webhook Guard error:", err);
+    }
+});
+
+// 10.11 Anti-Thread-Spam
+client.on("threadCreate", async (thread) => {
+    if (!thread.guild) return;
+    const guild = thread.guild;
+    const cfg = getGuildConfig(guild);
+    if (!cfg.security.antiThreadSpamEnabled) return;
+
+    const now = Date.now();
+    const key = guild.id;
+
+    if (!threadCreateTracker.has(key)) threadCreateTracker.set(key, []);
+    const timestamps = threadCreateTracker.get(key);
+    timestamps.push(now);
+
+    const filtered = timestamps.filter(t => now - t < 10000);
+    threadCreateTracker.set(key, filtered);
+
+    if (filtered.length >= 10) {
+        await sendLog(
+            guild,
+            "Anti-Thread-Spam",
+            "High rate of thread creation detected.",
+            null,
+            "high"
+        );
+    }
+});
+
+// 10.12 Anti-Ghost-Ping
+client.on("messageDelete", async (msg) => {
+    if (!msg.guild || !msg.mentions) return;
+
+    const cfg = getGuildConfig(msg.guild);
+    if (!cfg.security.antiGhostPingEnabled) return;
+
+    const mentionedUsers = msg.mentions.users;
+    if (!mentionedUsers || mentionedUsers.size === 0) return;
+
+    await sendLog(
+        msg.guild,
+        "Anti-Ghost-Ping",
+        `A message by ${msg.author?.tag || "Unknown"} was deleted after pinging: ${mentionedUsers.map(u => u.tag).join(", ")}`,
+        msg.author || null,
+        "medium"
+    );
+
+    if (msg.channel && msg.channel.isTextBased()) {
+        await sendPublicAlert(
+            msg.channel,
+            msg.guild,
+            "Anti-Ghost-Ping: A deleted message that pinged users was detected."
+        );
+    }
+});
+
 // -----------------------
-// 10. Login
+// 11. Login
 // -----------------------
 client.login(process.env.TOKEN).catch(err => {
     console.error("Failed to login:", err);
