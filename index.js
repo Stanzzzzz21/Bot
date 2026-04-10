@@ -62,8 +62,7 @@ const panelEditSessions = new Collection();
 const WHITELIST = ["876731494805155851"]; // your IDs here
 const WEBSITE_URL = "https://cyber-shield-gray.vercel.app/";
 const UNQUARANTINE_REQUEST_COMMANDS = new Set([
-    "unquarantine_request",
-    "unquaratnine_reuqest"
+    "unquarantine_request"
 ]);
 
 // -----------------------
@@ -358,15 +357,7 @@ const commands = [
         ),
 
     new SlashCommandBuilder()
-        .setName("unquaratnine_reuqest")
-        .setDescription("Request to be unquarantined (quarantine channel only)")
-        .addStringOption(o =>
-            o.setName("reason")
-             .setDescription("Explain why you should be unquarantined")
-             .setRequired(true)
-        ),
-
-    new SlashCommandBuilder()
+ 
         .setName("shieldpanel")
         .setDescription("Open the CyberShield settings dashboard")
 ].map(c => c.toJSON());
