@@ -367,7 +367,7 @@ const commands = [
     new SlashCommandBuilder()
  
        
-    if (!cfg) {
+     (!cfg) {
         cfg = {
             staffRoleId: null,
             logChannelId: null,
