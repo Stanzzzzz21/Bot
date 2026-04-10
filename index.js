@@ -66,15 +66,42 @@ const WEBSITE_URL = "https://cyber-shield-gray.vercel.app/";
 // 3. Slash Commands
 // -----------------------
 const commands = [
-    new SlashCommandBuilder()
-        .setName("setup")
-        .setDescription("Setup staff role, logs, quarantine and request system")
-        .addRoleOption(o =>
-            o.setName("staff_role")
-             .setDescription("Staff/admin role")
-             .setRequired(true)
-        )
-        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+// Try to find ANY existing log channel by ID OR name
+let logChannel = null;
+
+// 1. If config already has a log channel ID, try to fetch it
+if (cfg.logChannelId) {
+    logChannel = guild.channels.cache.get(cfg.logChannelId)
+        || await guild.channels.fetch(cfg.logChannelId).catch(() => null);
+}
+
+// 2. If not found, try to find by name
+if (!logChannel) {
+    logChannel = guild.channels.cache.find(
+        c => c.name === "shield-logs" && c.type === ChannelType.GuildText
+    );
+}
+
+// 3. If STILL not found, create a new one
+if (!logChannel) {
+    logChannel = await guild.channels.create({
+        name: "shield-logs",
+        type: ChannelType.GuildText,
+        permissionOverwrites: [
+            {
+                id: guild.roles.everyone.id,
+                deny: [PermissionsBitField.Flags.ViewChannel]
+            },
+            {
+                id: role.id,
+                allow: [PermissionsBitField.Flags.ViewChannel]
+            }
+        ]
+    });
+}
+
+// Save the ID so it never duplicates again
+cfg.logChannelId = logChannel.id;
 
     new SlashCommandBuilder()
         .setName("kick")
