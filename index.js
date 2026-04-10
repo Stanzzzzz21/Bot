@@ -367,18 +367,19 @@ const commands = [
     new SlashCommandBuilder()
  
        
-     (!cfg) {
-        cfg = {
-            staffRoleId: null,
-            logChannelId: null,
-            quarantineRoleId: null,
-            quarantineChannelId: null,
-            unquarantineRequestsChannelId: null,
-            mutedRoleId: null,
-            frozen: {
-                server: false,
-                channels: new Set()
-            },
+if (!cfg) {
+    cfg = {
+        staffRoleId: null,
+        logChannelId: null,
+        quarantineRoleId: null,
+        quarantineChannelId: null,
+        unquarantineRequestsChannelId: null,
+        mutedRoleId: null,
+        frozen: {
+            server: false,
+            channels: new Set()
+        }
+    };
             welcome: {
                 enabled: true,
                 channelId: null,
