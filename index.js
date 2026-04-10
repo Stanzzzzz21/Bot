@@ -267,18 +267,24 @@ function getGuildConfig(guild) {
                 maxLines: 8
             },
             security: {
+                antiRaidEnabled: true,
+                antiNukeEnabled: true,
                 antiSpamEnabled: true,
                 spamMessages: 5,
                 spamWindowMs: 3000,
                 antiMassMentionEnabled: true,
                 antiBotJoinEnabled: true,
                 antiAttachmentEnabled: true,
+                antiInviteEnabled: true,
                 antiChannelSpamEnabled: true,
                 antiRoleSpamEnabled: true,
                 antiEmojiSpamEnabled: true,
+                antiWebhookEnabled: true,
                 antiWebhookSpamEnabled: true,
                 antiThreadSpamEnabled: true,
-                antiGhostPingEnabled: true
+                antiGhostPingEnabled: true,
+                autoQuarantineEnabled: true,
+                publicAlertsEnabled: true
             },
             roleHistory: new Map()
         };
@@ -315,7 +321,7 @@ async function sendLog(guild, title, desc, user = null, priority = "medium") {
 // public mini-alert (thread-style) with clickable logs link
 async function sendPublicAlert(channel, guild, summary) {
     const cfg = getGuildConfig(guild);
-    if (!cfg.logChannelId) return;
+    if (!cfg.logChannelId || !cfg.security.publicAlertsEnabled) return;
 
     const lines = [
         "**CyberShield Alert**",
@@ -379,10 +385,8 @@ async function applyQuarantine(cfg, member, mode = "auto") {
         await member.roles.add(qRole).catch(() => null);
     }
 
-    // quarantine info message (thread-style)
     let lines;
     if (mode === "auto") {
-        // Tone A - strict & professional
         lines = [
             "**Quarantine Notice**",
             "You have been placed in quarantine due to security concerns.",
@@ -404,7 +408,6 @@ async function applyQuarantine(cfg, member, mode = "auto") {
             `For more information about CyberShield, visit: ${WEBSITE_URL}`
         ];
     } else {
-        // Tone B - neutral & informative
         lines = [
             "**Quarantine Notice**",
             "You’re currently in quarantine.",
@@ -442,16 +445,22 @@ async function applyQuarantine(cfg, member, mode = "auto") {
 // -----------------------
 function buildSecuritySummary(security) {
     return [
+        `Anti-Raid: ${security.antiRaidEnabled ? "On" : "Off"}`,
+        `Anti-Nuke: ${security.antiNukeEnabled ? "On" : "Off"}`,
         `Anti-Spam: ${security.antiSpamEnabled ? "On" : "Off"} (${security.spamMessages} msgs / ${security.spamWindowMs / 1000}s)`,
         `Anti-Mass-Mention: ${security.antiMassMentionEnabled ? "On" : "Off"}`,
         `Anti-Bot-Join: ${security.antiBotJoinEnabled ? "On" : "Off"}`,
         `Anti-Attachment: ${security.antiAttachmentEnabled ? "On" : "Off"}`,
+        `Anti-Invite: ${security.antiInviteEnabled ? "On" : "Off"}`,
+        `Anti-Webhook: ${security.antiWebhookEnabled ? "On" : "Off"}`,
+        `Anti-Webhook-Spam: ${security.antiWebhookSpamEnabled ? "On" : "Off"}`,
         `Anti-Channel-Spam: ${security.antiChannelSpamEnabled ? "On" : "Off"}`,
         `Anti-Role-Spam: ${security.antiRoleSpamEnabled ? "On" : "Off"}`,
         `Anti-Emoji-Spam: ${security.antiEmojiSpamEnabled ? "On" : "Off"}`,
-        `Anti-Webhook-Spam: ${security.antiWebhookSpamEnabled ? "On" : "Off"}`,
         `Anti-Thread-Spam: ${security.antiThreadSpamEnabled ? "On" : "Off"}`,
-        `Anti-Ghost-Ping: ${security.antiGhostPingEnabled ? "On" : "Off"}`
+        `Anti-Ghost-Ping: ${security.antiGhostPingEnabled ? "On" : "Off"}`,
+        `Auto-Quarantine: ${security.autoQuarantineEnabled ? "On" : "Off"}`,
+        `Public Alerts: ${security.publicAlertsEnabled ? "On" : "Off"}`
     ].join("\n");
 }
 
@@ -459,6 +468,8 @@ function buildPanelEmbed(guild, cfg, editing = false, draftSecurity = null) {
     const sec = draftSecurity || cfg.security;
     const lines = [
         "Recommended settings:",
+        "- Anti-Raid: On",
+        "- Anti-Nuke: On",
         "- Anti-Spam: On (5 msgs / 3s)",
         "- Anti-Mass-Mention: On",
         "- Anti-Bot-Join: On",
@@ -494,42 +505,32 @@ function buildPanelButtons(editing = false) {
 
     return [
         new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-                .setCustomId("panel_toggle_antispam")
-                .setLabel("Toggle Anti-Spam")
-                .setStyle(ButtonStyle.Secondary),
-            new ButtonBuilder()
-                .setCustomId("panel_spam_minus")
-                .setLabel("- Spam Msgs")
-                .setStyle(ButtonStyle.Secondary),
-            new ButtonBuilder()
-                .setCustomId("panel_spam_plus")
-                .setLabel("+ Spam Msgs")
-                .setStyle(ButtonStyle.Secondary)
+            new ButtonBuilder().setCustomId("panel_toggle_antiraid").setLabel("Anti-Raid").setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId("panel_toggle_antinuke").setLabel("Anti-Nuke").setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId("panel_toggle_antispam").setLabel("Anti-Spam").setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId("panel_spam_minus").setLabel("- Spam Msgs").setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId("panel_spam_plus").setLabel("+ Spam Msgs").setStyle(ButtonStyle.Secondary)
         ),
         new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-                .setCustomId("panel_toggle_massmention")
-                .setLabel("Toggle Anti-Mass-Mention")
-                .setStyle(ButtonStyle.Secondary),
-            new ButtonBuilder()
-                .setCustomId("panel_toggle_attachment")
-                .setLabel("Toggle Anti-Attachment")
-                .setStyle(ButtonStyle.Secondary),
-            new ButtonBuilder()
-                .setCustomId("panel_toggle_botjoin")
-                .setLabel("Toggle Anti-Bot-Join")
-                .setStyle(ButtonStyle.Secondary)
+            new ButtonBuilder().setCustomId("panel_toggle_massmention").setLabel("Anti-Mass-Mention").setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId("panel_toggle_botjoin").setLabel("Anti-Bot-Join").setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId("panel_toggle_attachment").setLabel("Anti-Attachment").setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId("panel_toggle_invite").setLabel("Anti-Invite").setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId("panel_toggle_webhook").setLabel("Anti-Webhook").setStyle(ButtonStyle.Secondary)
         ),
         new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-                .setCustomId("panel_save")
-                .setLabel("Save")
-                .setStyle(ButtonStyle.Success),
-            new ButtonBuilder()
-                .setCustomId("panel_cancel")
-                .setLabel("Cancel")
-                .setStyle(ButtonStyle.Danger)
+            new ButtonBuilder().setCustomId("panel_toggle_webhookspam").setLabel("Anti-Webhook-Spam").setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId("panel_toggle_channelspam").setLabel("Anti-Channel-Spam").setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId("panel_toggle_rolespam").setLabel("Anti-Role-Spam").setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId("panel_toggle_emojispam").setLabel("Anti-Emoji-Spam").setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId("panel_toggle_threadspam").setLabel("Anti-Thread-Spam").setStyle(ButtonStyle.Secondary)
+        ),
+        new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId("panel_toggle_ghostping").setLabel("Anti-Ghost-Ping").setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId("panel_toggle_autoquarantine").setLabel("Auto-Quarantine").setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId("panel_toggle_publicalerts").setLabel("Public Alerts").setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId("panel_save").setLabel("Save").setStyle(ButtonStyle.Success),
+            new ButtonBuilder().setCustomId("panel_cancel").setLabel("Cancel").setStyle(ButtonStyle.Danger)
         )
     ];
 }
@@ -908,7 +909,29 @@ client.on("interactionCreate", async (int) => {
             await restoreRoleHistory(cfg, member);
 
             await int.reply(`User ${member.user.tag} has been unquarantined.`);
-            await sendLog(int.guild, "User Unquarantined", `${member.user.tag} unquarantined by ${int.user.tag}\nReason: ${reason}`, member.user, "medium");
+
+            // Strict DM
+            try {
+                const dmEmbed = new EmbedBuilder()
+                    .setTitle("Your Quarantine Has Been Lifted")
+                    .setDescription(
+                        "Your quarantine has been lifted by server staff.\n\n" +
+                        "This action was performed manually and may not indicate approval of a previous request.\n" +
+                        "Please ensure you follow all server rules and avoid any behaviour that may trigger CyberShield’s security systems."
+                    )
+                    .setColor(0xf1c40f)
+                    .setTimestamp();
+
+                await member.send({ embeds: [dmEmbed] }).catch(() => null);
+            } catch {}
+
+            await sendLog(
+                int.guild,
+                "User Unquarantined (Manual)",
+                `${member.user.tag} was unquarantined by ${int.user.tag}\nReason: ${reason}`,
+                member.user,
+                "medium"
+            );
         }
 
         if (int.commandName === "unquarantine_request") {
@@ -1017,24 +1040,24 @@ async function handleButtonInteraction(int) {
 
         const sec = session.draftSecurity;
 
-        if (int.customId === "panel_toggle_antispam") {
-            sec.antiSpamEnabled = !sec.antiSpamEnabled;
-        }
-        if (int.customId === "panel_spam_minus") {
-            sec.spamMessages = Math.max(2, sec.spamMessages - 1);
-        }
-        if (int.customId === "panel_spam_plus") {
-            sec.spamMessages = Math.min(20, sec.spamMessages + 1);
-        }
-        if (int.customId === "panel_toggle_massmention") {
-            sec.antiMassMentionEnabled = !sec.antiMassMentionEnabled;
-        }
-        if (int.customId === "panel_toggle_attachment") {
-            sec.antiAttachmentEnabled = !sec.antiAttachmentEnabled;
-        }
-        if (int.customId === "panel_toggle_botjoin") {
-            sec.antiBotJoinEnabled = !sec.antiBotJoinEnabled;
-        }
+        if (int.customId === "panel_toggle_antiraid") sec.antiRaidEnabled = !sec.antiRaidEnabled;
+        if (int.customId === "panel_toggle_antinuke") sec.antiNukeEnabled = !sec.antiNukeEnabled;
+        if (int.customId === "panel_toggle_antispam") sec.antiSpamEnabled = !sec.antiSpamEnabled;
+        if (int.customId === "panel_spam_minus") sec.spamMessages = Math.max(2, sec.spamMessages - 1);
+        if (int.customId === "panel_spam_plus") sec.spamMessages = Math.min(20, sec.spamMessages + 1);
+        if (int.customId === "panel_toggle_massmention") sec.antiMassMentionEnabled = !sec.antiMassMentionEnabled;
+        if (int.customId === "panel_toggle_botjoin") sec.antiBotJoinEnabled = !sec.antiBotJoinEnabled;
+        if (int.customId === "panel_toggle_attachment") sec.antiAttachmentEnabled = !sec.antiAttachmentEnabled;
+        if (int.customId === "panel_toggle_invite") sec.antiInviteEnabled = !sec.antiInviteEnabled;
+        if (int.customId === "panel_toggle_webhook") sec.antiWebhookEnabled = !sec.antiWebhookEnabled;
+        if (int.customId === "panel_toggle_webhookspam") sec.antiWebhookSpamEnabled = !sec.antiWebhookSpamEnabled;
+        if (int.customId === "panel_toggle_channelspam") sec.antiChannelSpamEnabled = !sec.antiChannelSpamEnabled;
+        if (int.customId === "panel_toggle_rolespam") sec.antiRoleSpamEnabled = !sec.antiRoleSpamEnabled;
+        if (int.customId === "panel_toggle_emojispam") sec.antiEmojiSpamEnabled = !sec.antiEmojiSpamEnabled;
+        if (int.customId === "panel_toggle_threadspam") sec.antiThreadSpamEnabled = !sec.antiThreadSpamEnabled;
+        if (int.customId === "panel_toggle_ghostping") sec.antiGhostPingEnabled = !sec.antiGhostPingEnabled;
+        if (int.customId === "panel_toggle_autoquarantine") sec.autoQuarantineEnabled = !sec.autoQuarantineEnabled;
+        if (int.customId === "panel_toggle_publicalerts") sec.publicAlertsEnabled = !sec.publicAlertsEnabled;
 
         if (int.customId === "panel_save") {
             cfg.security = { ...sec };
@@ -1077,10 +1100,57 @@ async function handleButtonInteraction(int) {
     if (action === "accept") {
         await member.roles.remove(qRole).catch(() => null);
         await restoreRoleHistory(cfg, member);
+
         await int.update({
             content: `Request accepted by ${int.user.tag}. User has been unquarantined.`,
             components: []
         }).catch(() => null);
+
+        const qChannel = int.guild.channels.cache.get(cfg.quarantineChannelId);
+        if (qChannel) {
+            const lines = [
+                "**Unquarantine Approved**",
+                `${member}, your request has been accepted by staff.`,
+                "",
+                "You now have full access to the server again.",
+                "Please follow all server rules and avoid any behaviour that may trigger security systems.",
+                "",
+                `CyberShield is active. More info: ${WEBSITE_URL}`
+            ];
+
+            const embed = new EmbedBuilder()
+                .setDescription(lines.join("\n"))
+                .setColor(0x57f287)
+                .setTimestamp();
+
+            const msg = await qChannel.send({ content: `${member}`, embeds: [embed] }).catch(() => null);
+            if (msg) setTimeout(() => msg.delete().catch(() => null), 4 * 60 * 1000);
+        }
+
+        // Friendly + neutral DM
+        try {
+            const dmEmbed = new EmbedBuilder()
+                .setTitle("Your Unquarantine Request Was Approved")
+                .setDescription(
+                    "Good news — your unquarantine request has been reviewed and accepted by staff.\n\n" +
+                    "You now have full access to the server again.\n" +
+                    "Please continue to follow all server rules and guidelines.\n\n" +
+                    "If you have any questions, you may contact staff directly."
+                )
+                .setColor(0x57f287)
+                .setTimestamp();
+
+            await member.send({ embeds: [dmEmbed] }).catch(() => null);
+        } catch {}
+
+        const systemChannel = int.guild.systemChannel;
+        if (systemChannel) {
+            await sendPublicAlert(
+                systemChannel,
+                int.guild,
+                `Unquarantine: ${member.user.tag} has been restored to normal access.`
+            );
+        }
 
         await sendLog(
             int.guild,
@@ -1121,6 +1191,24 @@ async function handleButtonInteraction(int) {
             }
         }
 
+        // DM on reject (Option A)
+        try {
+            const dmEmbed = new EmbedBuilder()
+                .setTitle("Your Unquarantine Request Was Rejected")
+                .setDescription(
+                    "Your unquarantine request has been reviewed and rejected by staff.\n\n" +
+                    "You remain in quarantine for now.\n\n" +
+                    "What you can do:\n" +
+                    "- Wait some time before submitting another request.\n" +
+                    "- Make sure you follow all server rules.\n" +
+                    "- When you submit another request, be clear and honest about your situation."
+                )
+                .setColor(0xff0000)
+                .setTimestamp();
+
+            await member.send({ embeds: [dmEmbed] }).catch(() => null);
+        } catch {}
+
         await sendLog(
             int.guild,
             "Unquarantine Request Rejected",
@@ -1139,7 +1227,7 @@ client.on("guildMemberAdd", async (member) => {
     const cfg = getGuildConfig(guild);
 
     // Anti-Bot-Join
-    if (member.user.bot && cfg.security.antiBotJoinEnabled) {
+    if (cfg.security.antiBotJoinEnabled && member.user.bot) {
         if (!WHITELIST.includes(member.user.id)) {
             await member.kick("Anti-Bot-Join: Bot not whitelisted").catch(() => null);
             await sendLog(
@@ -1165,7 +1253,7 @@ client.on("guildMemberAdd", async (member) => {
     const accountAgeMs = Date.now() - member.user.createdTimestamp;
     const threeDaysMs = 3 * 24 * 60 * 60 * 1000;
 
-    if (accountAgeMs < threeDaysMs && cfg.quarantineRoleId && cfg.quarantineChannelId) {
+    if (cfg.security.autoQuarantineEnabled && accountAgeMs < threeDaysMs && cfg.quarantineRoleId && cfg.quarantineChannelId) {
         await applyQuarantine(cfg, member, "auto");
         await sendLog(
             guild,
@@ -1251,8 +1339,8 @@ client.on("messageCreate", async (msg) => {
     if (isStaff || isOwner || isWhitelisted) return;
 
     const content = msg.content.toLowerCase();
-    const hasWebhook = content.includes("discord.com/api/webhooks");
-    const hasInvite = content.includes("discord.gg/") || content.includes("discord.com/invite/");
+    const hasWebhook = cfg.security.antiWebhookEnabled && content.includes("discord.com/api/webhooks");
+    const hasInvite = cfg.security.antiInviteEnabled && (content.includes("discord.gg/") || content.includes("discord.com/invite/"));
 
     if (hasWebhook || hasInvite) {
         await msg.delete().catch(() => null);
@@ -1399,6 +1487,7 @@ client.on("messageCreate", async (msg) => {
 client.on("guildMemberAdd", async (member) => {
     const guild = member.guild;
     const cfg = getGuildConfig(guild);
+    if (!cfg.security.antiRaidEnabled) return;
 
     const now = Date.now();
     const key = guild.id;
@@ -1442,6 +1531,7 @@ client.on("channelDelete", async (channel) => {
     if (!channel.guild) return;
     const guild = channel.guild;
     const cfg = getGuildConfig(guild);
+    if (!cfg.security.antiNukeEnabled) return;
 
     try {
         const logs = await guild.fetchAuditLogs({ type: 12, limit: 1 });
