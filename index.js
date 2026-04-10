@@ -66,43 +66,17 @@ const WEBSITE_URL = "https://cyber-shield-gray.vercel.app/";
 // 3. Slash Commands
 // -----------------------
 const commands = [
-// Try to find ANY existing log channel by ID OR name
-let logChannel = null;
+    new SlashCommandBuilder()
+        .setName("setup")
+        .setDescription("Setup staff role, logs, quarantine and request system")
+        .addRoleOption(o =>
+            o.setName("staff_role")
+             .setDescription("Staff/admin role")
+             .setRequired(true)
+        )
+        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
-// 1. If config already has a log channel ID, try to fetch it
-if (cfg.logChannelId) {
-    logChannel = guild.channels.cache.get(cfg.logChannelId)
-        || await guild.channels.fetch(cfg.logChannelId).catch(() => null);
-}
-
-// 2. If not found, try to find by name
-if (!logChannel) {
-    logChannel = guild.channels.cache.find(
-        c => c.name === "shield-logs" && c.type === ChannelType.GuildText
-    );
-}
-
-// 3. If STILL not found, create a new one
-if (!logChannel) {
-    logChannel = await guild.channels.create({
-        name: "shield-logs",
-        type: ChannelType.GuildText,
-        permissionOverwrites: [
-            {
-                id: guild.roles.everyone.id,
-                deny: [PermissionsBitField.Flags.ViewChannel]
-            },
-            {
-                id: role.id,
-                allow: [PermissionsBitField.Flags.ViewChannel]
-            }
-        ]
-    });
-}
-
-// Save the ID so it never duplicates again
-cfg.logChannelId = logChannel.id;
-
+    // Moderation core
     new SlashCommandBuilder()
         .setName("kick")
         .setDescription("Kick a user from the server")
@@ -129,6 +103,120 @@ cfg.logChannelId = logChannel.id;
             o.setName("reason")
              .setDescription("Reason for ban")
              .setRequired(false)
+        ),
+
+    new SlashCommandBuilder()
+        .setName("softban")
+        .setDescription("Softban a user (ban, delete messages, unban)")
+        .addUserOption(o =>
+            o.setName("user")
+             .setDescription("User to softban")
+             .setRequired(true)
+        )
+        .addStringOption(o =>
+            o.setName("reason")
+             .setDescription("Reason for softban")
+             .setRequired(false)
+        ),
+
+    new SlashCommandBuilder()
+        .setName("timeout")
+        .setDescription("Timeout a user")
+        .addUserOption(o =>
+            o.setName("user")
+             .setDescription("User to timeout")
+             .setRequired(true)
+        )
+        .addIntegerOption(o =>
+            o.setName("minutes")
+             .setDescription("Duration in minutes")
+             .setRequired(true)
+        )
+        .addStringOption(o =>
+            o.setName("reason")
+             .setDescription("Reason for timeout")
+             .setRequired(false)
+        ),
+
+    new SlashCommandBuilder()
+        .setName("untimeout")
+        .setDescription("Remove timeout from a user")
+        .addUserOption(o =>
+            o.setName("user")
+             .setDescription("User to untimeout")
+             .setRequired(true)
+        ),
+
+    new SlashCommandBuilder()
+        .setName("mute")
+        .setDescription("Mute a user (Muted role)")
+        .addUserOption(o =>
+            o.setName("user")
+             .setDescription("User to mute")
+             .setRequired(true)
+        )
+        .addStringOption(o =>
+            o.setName("reason")
+             .setDescription("Reason for mute")
+             .setRequired(false)
+        ),
+
+    new SlashCommandBuilder()
+        .setName("unmute")
+        .setDescription("Unmute a user (Muted role)")
+        .addUserOption(o =>
+            o.setName("user")
+             .setDescription("User to unmute")
+             .setRequired(true)
+        ),
+
+    new SlashCommandBuilder()
+        .setName("warn")
+        .setDescription("Warn a user")
+        .addUserOption(o =>
+            o.setName("user")
+             .setDescription("User to warn")
+             .setRequired(true)
+        )
+        .addStringOption(o =>
+            o.setName("reason")
+             .setDescription("Reason for warning")
+             .setRequired(true)
+        ),
+
+    new SlashCommandBuilder()
+        .setName("warnings")
+        .setDescription("View warnings for a user")
+        .addUserOption(o =>
+            o.setName("user")
+             .setDescription("User to view warnings for")
+             .setRequired(true)
+        ),
+
+    new SlashCommandBuilder()
+        .setName("clearwarnings")
+        .setDescription("Clear all warnings for a user")
+        .addUserOption(o =>
+            o.setName("user")
+             .setDescription("User to clear warnings for")
+             .setRequired(true)
+        ),
+
+    new SlashCommandBuilder()
+        .setName("lock")
+        .setDescription("Lock the current channel"),
+
+    new SlashCommandBuilder()
+        .setName("unlock")
+        .setDescription("Unlock the current channel"),
+
+    new SlashCommandBuilder()
+        .setName("slowmode")
+        .setDescription("Set slowmode for the current channel")
+        .addIntegerOption(o =>
+            o.setName("seconds")
+             .setDescription("Slowmode in seconds (0 to disable)")
+             .setRequired(true)
         ),
 
     new SlashCommandBuilder()
@@ -282,6 +370,7 @@ function getGuildConfig(guild) {
             quarantineRoleId: null,
             quarantineChannelId: null,
             unquarantineRequestsChannelId: null,
+            mutedRoleId: null,
             frozen: {
                 server: false,
                 channels: new Set()
@@ -313,7 +402,8 @@ function getGuildConfig(guild) {
                 autoQuarantineEnabled: true,
                 publicAlertsEnabled: true
             },
-            roleHistory: new Map()
+            roleHistory: new Map(),
+            warnings: new Map()
         };
         guildConfig.set(guild.id, cfg);
     }
@@ -345,7 +435,6 @@ async function sendLog(guild, title, desc, user = null, priority = "medium") {
     await channel.send({ embeds: [embed] }).catch(() => null);
 }
 
-// public mini-alert (thread-style) with clickable logs link
 async function sendPublicAlert(channel, guild, summary) {
     const cfg = getGuildConfig(guild);
     if (!cfg.logChannelId || !cfg.security.publicAlertsEnabled) return;
@@ -367,14 +456,13 @@ async function sendPublicAlert(channel, guild, summary) {
     setTimeout(() => msg.delete().catch(() => null), 4 * 60 * 1000);
 }
 
-// generic temp notice (simple text)
 async function sendTempNotice(channel, content, options = {}) {
     const msg = await channel.send({ content, ...options }).catch(() => null);
     if (!msg) return;
     setTimeout(() => msg.delete().catch(() => null), 4 * 60 * 1000);
 }
 
-// role history helpers
+// Role history helpers
 function saveRoleHistory(cfg, member) {
     const roles = member.roles.cache
         .filter(r => r.id !== member.guild.id)
@@ -395,7 +483,7 @@ async function restoreRoleHistory(cfg, member) {
     cfg.roleHistory.delete(member.id);
 }
 
-// quarantine apply + info message
+// Quarantine apply helper
 async function applyQuarantine(cfg, member, mode = "auto") {
     const guild = member.guild;
     const qRole = guild.roles.cache.get(cfg.quarantineRoleId);
@@ -465,6 +553,20 @@ async function applyQuarantine(cfg, member, mode = "auto") {
     if (msg) {
         setTimeout(() => msg.delete().catch(() => null), 4 * 60 * 1000);
     }
+}
+
+// Warnings helpers
+function addWarning(cfg, userId, data) {
+    if (!cfg.warnings.has(userId)) cfg.warnings.set(userId, []);
+    cfg.warnings.get(userId).push(data);
+}
+
+function getWarnings(cfg, userId) {
+    return cfg.warnings.get(userId) || [];
+}
+
+function clearWarnings(cfg, userId) {
+    cfg.warnings.delete(userId);
 }
 
 // -----------------------
@@ -633,9 +735,12 @@ client.on("interactionCreate", async (int) => {
     const isStaff = cfg.staffRoleId && int.member.roles.cache.has(cfg.staffRoleId);
 
     const staffCommands = [
-        "kick", "ban", "purge", "freeze", "unfreeze",
+        "kick", "ban", "softban", "timeout", "untimeout",
+        "mute", "unmute", "warn", "warnings", "clearwarnings",
+        "lock", "unlock", "slowmode",
+        "purge", "freeze", "unfreeze",
         "roleadd", "roleremove", "welcomeconfig",
-        "quarantine", "unquarantine", "unquarantine_request",
+        "quarantine", "unquarantine",
         "shieldpanel"
     ];
 
@@ -653,12 +758,21 @@ client.on("interactionCreate", async (int) => {
     }
 
     try {
+        // SETUP
         if (int.commandName === "setup") {
             const role = int.options.getRole("staff_role");
 
-            let logChannel = int.guild.channels.cache.find(
-                c => c.name === "shield-logs" && c.type === ChannelType.GuildText
-            );
+            // Logs channel (duplicate-proof)
+            let logChannel = null;
+            if (cfg.logChannelId) {
+                logChannel = int.guild.channels.cache.get(cfg.logChannelId)
+                    || await int.guild.channels.fetch(cfg.logChannelId).catch(() => null);
+            }
+            if (!logChannel) {
+                logChannel = int.guild.channels.cache.find(
+                    c => c.name === "shield-logs" && c.type === ChannelType.GuildText
+                );
+            }
             if (!logChannel) {
                 logChannel = await int.guild.channels.create({
                     name: "shield-logs",
@@ -675,8 +789,17 @@ client.on("interactionCreate", async (int) => {
                     ]
                 });
             }
+            cfg.logChannelId = logChannel.id;
 
-            let qRole = int.guild.roles.cache.find(r => r.name === "Quarantined");
+            // Quarantine role (duplicate-proof)
+            let qRole = null;
+            if (cfg.quarantineRoleId) {
+                qRole = int.guild.roles.cache.get(cfg.quarantineRoleId)
+                    || await int.guild.roles.fetch(cfg.quarantineRoleId).catch(() => null);
+            }
+            if (!qRole) {
+                qRole = int.guild.roles.cache.find(r => r.name === "Quarantined");
+            }
             if (!qRole) {
                 qRole = await int.guild.roles.create({
                     name: "Quarantined",
@@ -684,10 +807,19 @@ client.on("interactionCreate", async (int) => {
                     reason: "CyberShield Quarantine Role"
                 });
             }
+            cfg.quarantineRoleId = qRole.id;
 
-            let qChannel = int.guild.channels.cache.find(
-                c => c.name === "quarantine-hold" && c.type === ChannelType.GuildText
-            );
+            // Quarantine channel (duplicate-proof)
+            let qChannel = null;
+            if (cfg.quarantineChannelId) {
+                qChannel = int.guild.channels.cache.get(cfg.quarantineChannelId)
+                    || await int.guild.channels.fetch(cfg.quarantineChannelId).catch(() => null);
+            }
+            if (!qChannel) {
+                qChannel = int.guild.channels.cache.find(
+                    c => c.name === "quarantine-hold" && c.type === ChannelType.GuildText
+                );
+            }
             if (!qChannel) {
                 qChannel = await int.guild.channels.create({
                     name: "quarantine-hold",
@@ -708,10 +840,19 @@ client.on("interactionCreate", async (int) => {
                     ]
                 });
             }
+            cfg.quarantineChannelId = qChannel.id;
 
-            let reqChannel = int.guild.channels.cache.find(
-                c => c.name === "unquarantine-requests" && c.type === ChannelType.GuildText
-            );
+            // Unquarantine requests channel (duplicate-proof)
+            let reqChannel = null;
+            if (cfg.unquarantineRequestsChannelId) {
+                reqChannel = int.guild.channels.cache.get(cfg.unquarantineRequestsChannelId)
+                    || await int.guild.channels.fetch(cfg.unquarantineRequestsChannelId).catch(() => null);
+            }
+            if (!reqChannel) {
+                reqChannel = int.guild.channels.cache.find(
+                    c => c.name === "unquarantine-requests" && c.type === ChannelType.GuildText
+                );
+            }
             if (!reqChannel) {
                 reqChannel = await int.guild.channels.create({
                     name: "unquarantine-requests",
@@ -728,12 +869,26 @@ client.on("interactionCreate", async (int) => {
                     ]
                 });
             }
-
-            cfg.staffRoleId = role.id;
-            cfg.logChannelId = logChannel.id;
-            cfg.quarantineRoleId = qRole.id;
-            cfg.quarantineChannelId = qChannel.id;
             cfg.unquarantineRequestsChannelId = reqChannel.id;
+
+            // Muted role (for mute command)
+            let mutedRole = null;
+            if (cfg.mutedRoleId) {
+                mutedRole = int.guild.roles.cache.get(cfg.mutedRoleId)
+                    || await int.guild.roles.fetch(cfg.mutedRoleId).catch(() => null);
+            }
+            if (!mutedRole) {
+                mutedRole = int.guild.roles.cache.find(r => r.name === "Muted");
+            }
+            if (!mutedRole) {
+                mutedRole = await int.guild.roles.create({
+                    name: "Muted",
+                    color: 0x808080,
+                    reason: "CyberShield Muted Role"
+                });
+            }
+            cfg.mutedRoleId = mutedRole.id;
+
             guildConfig.set(int.guild.id, cfg);
 
             await int.reply(
@@ -742,10 +897,13 @@ client.on("interactionCreate", async (int) => {
                 `Logs: <#${logChannel.id}>\n` +
                 `Quarantine Role: <@&${qRole.id}>\n` +
                 `Quarantine Channel: <#${qChannel.id}>\n` +
-                `Unquarantine Requests: <#${reqChannel.id}>`
+                `Unquarantine Requests: <#${reqChannel.id}>\n` +
+                `Muted Role: <@&${mutedRole.id}>`
             );
             await sendLog(int.guild, "Setup Completed", `Setup run by ${int.user.tag}`, int.user, "medium");
         }
+
+        // MODERATION COMMANDS
 
         if (int.commandName === "kick") {
             const target = int.options.getMember("user");
@@ -771,6 +929,159 @@ client.on("interactionCreate", async (int) => {
             await target.ban({ reason });
             await int.reply(`Banned ${target.user.tag}\nReason: ${reason}`);
             await sendLog(int.guild, "User Banned", `${target.user.tag} was banned by ${int.user.tag}\nReason: ${reason}`, target.user, "high");
+        }
+
+        if (int.commandName === "softban") {
+            const targetUser = int.options.getUser("user");
+            const reason = int.options.getString("reason") || "No reason provided";
+
+            const member = int.guild.members.cache.get(targetUser.id) ||
+                await int.guild.members.fetch(targetUser.id).catch(() => null);
+            if (!member) return int.reply({ content: "User not found.", ephemeral: true });
+            if (!member.bannable) return int.reply({ content: "❌ I cannot softban this user.", ephemeral: true });
+
+            await member.ban({ reason, deleteMessageSeconds: 7 * 24 * 60 * 60 }).catch(() => null);
+            await int.guild.members.unban(targetUser.id, "Softban unban").catch(() => null);
+
+            await int.reply(`Softbanned ${targetUser.tag}\nReason: ${reason}`);
+            await sendLog(int.guild, "User Softbanned", `${targetUser.tag} softbanned by ${int.user.tag}\nReason: ${reason}`, targetUser, "high");
+        }
+
+        if (int.commandName === "timeout") {
+            const member = int.options.getMember("user");
+            const minutes = int.options.getInteger("minutes");
+            const reason = int.options.getString("reason") || "No reason provided";
+
+            if (!member) return int.reply({ content: "User not found.", ephemeral: true });
+            if (!member.moderatable) return int.reply({ content: "❌ I cannot timeout this user.", ephemeral: true });
+
+            const ms = Math.max(1, minutes) * 60 * 1000;
+            await member.timeout(ms, reason).catch(() => null);
+
+            await int.reply(`Timed out ${member.user.tag} for ${minutes} minute(s).\nReason: ${reason}`);
+            await sendLog(int.guild, "User Timed Out", `${member.user.tag} timed out by ${int.user.tag} for ${minutes} minute(s)\nReason: ${reason}`, member.user, "medium");
+        }
+
+        if (int.commandName === "untimeout") {
+            const member = int.options.getMember("user");
+            if (!member) return int.reply({ content: "User not found.", ephemeral: true });
+
+            await member.timeout(null, "Timeout removed").catch(() => null);
+            await int.reply(`Removed timeout from ${member.user.tag}.`);
+            await sendLog(int.guild, "Timeout Removed", `${member.user.tag} timeout removed by ${int.user.tag}`, member.user, "low");
+        }
+
+        if (int.commandName === "mute") {
+            const member = int.options.getMember("user");
+            const reason = int.options.getString("reason") || "No reason provided";
+
+            if (!member) return int.reply({ content: "User not found.", ephemeral: true });
+
+            let mutedRole = int.guild.roles.cache.get(cfg.mutedRoleId);
+            if (!mutedRole) {
+                mutedRole = int.guild.roles.cache.find(r => r.name === "Muted");
+                if (!mutedRole) {
+                    mutedRole = await int.guild.roles.create({
+                        name: "Muted",
+                        color: 0x808080,
+                        reason: "CyberShield Muted Role"
+                    });
+                }
+                cfg.mutedRoleId = mutedRole.id;
+            }
+
+            await member.roles.add(mutedRole).catch(() => null);
+            await int.reply(`Muted ${member.user.tag}.\nReason: ${reason}`);
+            await sendLog(int.guild, "User Muted", `${member.user.tag} muted by ${int.user.tag}\nReason: ${reason}`, member.user, "medium");
+        }
+
+        if (int.commandName === "unmute") {
+            const member = int.options.getMember("user");
+            if (!member) return int.reply({ content: "User not found.", ephemeral: true });
+
+            const mutedRole = int.guild.roles.cache.get(cfg.mutedRoleId) ||
+                int.guild.roles.cache.find(r => r.name === "Muted");
+            if (!mutedRole) return int.reply({ content: "Muted role not found.", ephemeral: true });
+
+            await member.roles.remove(mutedRole).catch(() => null);
+            await int.reply(`Unmuted ${member.user.tag}.`);
+            await sendLog(int.guild, "User Unmuted", `${member.user.tag} unmuted by ${int.user.tag}`, member.user, "low");
+        }
+
+        if (int.commandName === "warn") {
+            const member = int.options.getMember("user");
+            const reason = int.options.getString("reason");
+
+            if (!member) return int.reply({ content: "User not found.", ephemeral: true });
+
+            const data = {
+                reason,
+                by: int.user.id,
+                at: Date.now()
+            };
+            addWarning(cfg, member.id, data);
+
+            await int.reply(`Warned ${member.user.tag}.\nReason: ${reason}`);
+            await sendLog(int.guild, "User Warned", `${member.user.tag} warned by ${int.user.tag}\nReason: ${reason}`, member.user, "medium");
+        }
+
+        if (int.commandName === "warnings") {
+            const member = int.options.getMember("user");
+            if (!member) return int.reply({ content: "User not found.", ephemeral: true });
+
+            const warns = getWarnings(cfg, member.id);
+            if (!warns.length) {
+                return int.reply({ content: `${member.user.tag} has no warnings.`, ephemeral: true });
+            }
+
+            const lines = warns.map((w, i) => {
+                const by = int.guild.members.cache.get(w.by)?.user.tag || w.by;
+                const date = new Date(w.at).toLocaleString();
+                return `**#${i + 1}** - by ${by} on ${date}\nReason: ${w.reason}`;
+            });
+
+            const embed = new EmbedBuilder()
+                .setTitle(`Warnings for ${member.user.tag}`)
+                .setDescription(lines.join("\n\n"))
+                .setColor(0xf1c40f);
+
+            await int.reply({ embeds: [embed], ephemeral: true });
+        }
+
+        if (int.commandName === "clearwarnings") {
+            const member = int.options.getMember("user");
+            if (!member) return int.reply({ content: "User not found.", ephemeral: true });
+
+            clearWarnings(cfg, member.id);
+            await int.reply(`Cleared all warnings for ${member.user.tag}.`);
+            await sendLog(int.guild, "Warnings Cleared", `All warnings for ${member.user.tag} cleared by ${int.user.tag}`, member.user, "low");
+        }
+
+        if (int.commandName === "lock") {
+            await int.channel.permissionOverwrites.edit(int.guild.roles.everyone, {
+                SendMessages: false
+            }).catch(() => null);
+            await int.reply("This channel has been locked. Only staff can speak.");
+            await sendLog(int.guild, "Channel Locked", `${int.user.tag} locked #${int.channel.name}`, int.user, "medium");
+        }
+
+        if (int.commandName === "unlock") {
+            await int.channel.permissionOverwrites.edit(int.guild.roles.everyone, {
+                SendMessages: null
+            }).catch(() => null);
+            await int.reply("This channel has been unlocked.");
+            await sendLog(int.guild, "Channel Unlocked", `${int.user.tag} unlocked #${int.channel.name}`, int.user, "low");
+        }
+
+        if (int.commandName === "slowmode") {
+            const seconds = int.options.getInteger("seconds");
+            if (seconds < 0 || seconds > 21600) {
+                return int.reply({ content: "Slowmode must be between 0 and 21600 seconds.", ephemeral: true });
+            }
+
+            await int.channel.setRateLimitPerUser(seconds, `Set by ${int.user.tag}`).catch(() => null);
+            await int.reply(`Slowmode set to ${seconds} second(s).`);
+            await sendLog(int.guild, "Slowmode Changed", `${int.user.tag} set slowmode in #${int.channel.name} to ${seconds}s`, int.user, "low");
         }
 
         if (int.commandName === "purge") {
@@ -1218,7 +1529,7 @@ async function handleButtonInteraction(int) {
             }
         }
 
-        // DM on reject (Option A)
+        // DM on reject
         try {
             const dmEmbed = new EmbedBuilder()
                 .setTitle("Your Unquarantine Request Was Rejected")
