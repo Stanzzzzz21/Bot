@@ -355,6 +355,9 @@ const commands = [
              .setRequired(false)
         ),
 
+ const { SlashCommandBuilder } = require("discord.js");
+
+const commands = [
     new SlashCommandBuilder()
         .setName("unquarantine_request")
         .setDescription("Request to be unquarantined (quarantine channel only)")
@@ -362,9 +365,8 @@ const commands = [
             o.setName("reason")
              .setDescription("Explain why you should be unquarantined")
              .setRequired(true)
-        ),
-
-    new SlashCommandBuilder()
+        )
+];
  
        
 if (!cfg) {
