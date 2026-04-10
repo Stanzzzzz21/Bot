@@ -25,6 +25,7 @@ const {
 } = require("discord.js");
 const express = require("express");
 const { MessageFlags } = require('discord.js');
+const { SlashCommandBuilder } = require("discord.js");
 
 process.on("unhandledRejection", (reason) => {
     console.error("Unhandled promise rejection:", reason);
@@ -341,6 +342,9 @@ const commands = [
              .setRequired(false)
         ),
 
+
+
+const commands = [
     new SlashCommandBuilder()
         .setName("unquarantine")
         .setDescription("Remove a user from quarantine")
@@ -355,9 +359,6 @@ const commands = [
              .setRequired(false)
         ),
 
- const { SlashCommandBuilder } = require("discord.js");
-
-const commands = [
     new SlashCommandBuilder()
         .setName("unquarantine_request")
         .setDescription("Request to be unquarantined (quarantine channel only)")
@@ -367,8 +368,9 @@ const commands = [
              .setRequired(true)
         )
 ];
- 
-       
+
+
+// CONFIG SYSTEM (FIXED STRUCTURE)
 if (!cfg) {
     cfg = {
         staffRoleId: null,
@@ -377,46 +379,49 @@ if (!cfg) {
         quarantineChannelId: null,
         unquarantineRequestsChannelId: null,
         mutedRoleId: null,
+
         frozen: {
             server: false,
             channels: new Set()
-        }
+        },
+
+        welcome: {
+            enabled: true,
+            channelId: null,
+            style: "normal",
+            customText: null,
+            maxLines: 8
+        },
+
+        security: {
+            antiRaidEnabled: true,
+            antiNukeEnabled: true,
+            antiSpamEnabled: true,
+            spamMessages: 5,
+            spamWindowMs: 3000,
+            antiMassMentionEnabled: true,
+            antiBotJoinEnabled: true,
+            antiAttachmentEnabled: true,
+            antiInviteEnabled: true,
+            antiChannelSpamEnabled: true,
+            antiRoleSpamEnabled: true,
+            antiEmojiSpamEnabled: true,
+            antiWebhookEnabled: true,
+            antiWebhookSpamEnabled: true,
+            antiThreadSpamEnabled: true,
+            antiGhostPingEnabled: true,
+            autoQuarantineEnabled: true,
+            publicAlertsEnabled: true
+        },
+
+        roleHistory: new Map(),
+        warnings: new Map()
     };
-            welcome: {
-                enabled: true,
-                channelId: null,
-                style: "normal",
-                customText: null,
-                maxLines: 8
-            },
-            security: {
-                antiRaidEnabled: true,
-                antiNukeEnabled: true,
-                antiSpamEnabled: true,
-                spamMessages: 5,
-                spamWindowMs: 3000,
-                antiMassMentionEnabled: true,
-                antiBotJoinEnabled: true,
-                antiAttachmentEnabled: true,
-                antiInviteEnabled: true,
-                antiChannelSpamEnabled: true,
-                antiRoleSpamEnabled: true,
-                antiEmojiSpamEnabled: true,
-                antiWebhookEnabled: true,
-                antiWebhookSpamEnabled: true,
-                antiThreadSpamEnabled: true,
-                antiGhostPingEnabled: true,
-                autoQuarantineEnabled: true,
-                publicAlertsEnabled: true
-            },
-            roleHistory: new Map(),
-            warnings: new Map()
-        };
-        guildConfig.set(guild.id, cfg);
-    }
-    return cfg;
+
+    guildConfig.set(guild.id, cfg);
 }
 
+return cfg;
 function getPriorityColor(priority) {
     if (priority === "high") return 0xff0000;
     if (priority === "low") return 0x57f287;
