@@ -1273,6 +1273,8 @@ client.on("interactionCreate", async (int) => {
             );
         }
 
+        
+
         if (int.commandName === "unquarantine_request") {
             if (!cfg.quarantineRoleId || !cfg.quarantineChannelId || !cfg.unquarantineRequestsChannelId) {
                 return int.reply({ content: "Quarantine system is not configured. Ask staff to run /setup.", ephemeral: true });
