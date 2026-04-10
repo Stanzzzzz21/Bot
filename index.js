@@ -61,6 +61,10 @@ const panelEditSessions = new Collection();
 
 const WHITELIST = ["876731494805155851"]; // your IDs here
 const WEBSITE_URL = "https://cyber-shield-gray.vercel.app/";
+const UNQUARANTINE_REQUEST_COMMANDS = new Set([
+    "unquarantine_request",
+    "unquaratnine_reuqest"
+]);
 
 // -----------------------
 // 3. Slash Commands
@@ -346,6 +350,15 @@ const commands = [
 
     new SlashCommandBuilder()
         .setName("unquarantine_request")
+        .setDescription("Request to be unquarantined (quarantine channel only)")
+        .addStringOption(o =>
+            o.setName("reason")
+             .setDescription("Explain why you should be unquarantined")
+             .setRequired(true)
+        ),
+
+    new SlashCommandBuilder()
+        .setName("unquaratnine_reuqest")
         .setDescription("Request to be unquarantined (quarantine channel only)")
         .addStringOption(o =>
             o.setName("reason")
@@ -692,7 +705,7 @@ client.on("guildCreate", async (guild) => {
         "CyberShield has joined this server.",
         "",
         "Recommended settings:",
-        "- #IMPORTANT **Make sure the bots role is high so moderation commands work**"
+        "- #IMPORTANT **Make sure the bots role is high so moderation commands work**",
         "- Give CyberShield Administrator or strong moderation permissions.",
         "- Run /setup to link your staff role and create logs and quarantine.",
         "- Keep Anti-Raid, Anti-Nuke, Anti-Spam, Anti-Mass-Mention and Webhook Guard enabled.",
@@ -746,6 +759,7 @@ client.on("interactionCreate", async (int) => {
     ];
 
     const isSetup = int.commandName === "setup";
+    const isUnquarantineRequestCommand = UNQUARANTINE_REQUEST_COMMANDS.has(int.commandName);
     const isStaffCommand = staffCommands.includes(int.commandName);
 
     if (isSetup) {
@@ -889,6 +903,7 @@ client.on("interactionCreate", async (int) => {
                 });
             }
             cfg.mutedRoleId = mutedRole.id;
+            cfg.staffRoleId = role.id;
 
             guildConfig.set(int.guild.id, cfg);
 
@@ -1275,16 +1290,21 @@ client.on("interactionCreate", async (int) => {
 
         
 
-        if (int.commandName === "unquarantine_request") {
+        if (isUnquarantineRequestCommand) {
             if (!cfg.quarantineRoleId || !cfg.quarantineChannelId || !cfg.unquarantineRequestsChannelId) {
                 return int.reply({ content: "Quarantine system is not configured. Ask staff to run /setup.", ephemeral: true });
             }
 
-            const qRole = int.guild.roles.cache.get(cfg.quarantineRoleId);
-            const qChannel = int.guild.channels.cache.get(cfg.quarantineChannelId);
-            const reqChannel = int.guild.channels.cache.get(cfg.unquarantineRequestsChannelId);
+            const qRole = int.guild.roles.cache.get(cfg.quarantineRoleId)
+                || await int.guild.roles.fetch(cfg.quarantineRoleId).catch(() => null);
+            const qChannel = int.guild.channels.cache.get(cfg.quarantineChannelId)
+                || await int.guild.channels.fetch(cfg.quarantineChannelId).catch(() => null);
+            const reqChannel = int.guild.channels.cache.get(cfg.unquarantineRequestsChannelId)
+                || await int.guild.channels.fetch(cfg.unquarantineRequestsChannelId).catch(() => null);
+            const member = int.member
+                || await int.guild.members.fetch(int.user.id).catch(() => null);
 
-            if (!qRole || !qChannel || !reqChannel) {
+            if (!qRole || !qChannel || !reqChannel || !member) {
                 return int.reply({ content: "Quarantine system channels or roles are missing.", ephemeral: true });
             }
 
@@ -1292,7 +1312,7 @@ client.on("interactionCreate", async (int) => {
                 return int.reply({ content: "You can only use this command in the quarantine channel.", ephemeral: true });
             }
 
-            if (!int.member.roles.cache.has(qRole.id)) {
+            if (!member.roles.cache.has(qRole.id)) {
                 return int.reply({ content: "You must be quarantined to use this command.", ephemeral: true });
             }
 
