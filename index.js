@@ -24,6 +24,7 @@ const {
     ButtonStyle
 } = require("discord.js");
 const express = require("express");
+const { MessageFlags } = require('discord.js');
 
 process.on("unhandledRejection", (reason) => {
     console.error("Unhandled promise rejection:", reason);
@@ -754,11 +755,11 @@ client.on("interactionCreate", async (int) => {
 
     if (isSetup) {
         if (!(isOwner || isWhitelisted || isAdminPerm)) {
-            return int.reply({ content: "❌ You are not authorized to use /setup.", ephemeral: true });
+            return int.reply({ content: "❌ You are not authorized to use /setup.", flags: MessageFlags.Ephemeral });
         }
     } else if (isStaffCommand) {
         if (!(isOwner || isWhitelisted || isStaff)) {
-            return int.reply({ content: "❌ You must have the staff role to use this command.", ephemeral: true });
+            return int.reply({ content: "❌ You must have the staff role to use this command.", flags: MessageFlags.Ephemeral });
         }
     }
 
@@ -774,7 +775,7 @@ client.on("interactionCreate", async (int) => {
                     // SETUP
         if (int.commandName === "setup") {
             if (setupLocks.has(int.guild.id)) {
-                return int.reply({ content: "Setup is already running for this server. Please wait a few seconds and try again.", ephemeral: true });
+                return int.reply({ content: "Setup is already running for this server. Please wait a few seconds and try again.", flags: MessageFlags.Ephemeral });
             }
 
             setupLocks.add(int.guild.id);
@@ -807,12 +808,13 @@ client.on("interactionCreate", async (int) => {
             if (!qRole) {
                 qRole = await int.guild.roles.create({
                     name: "Quarantined",
-                    color: 0xff0000,
+                    colors: ['#0xff0000']
                     reason: "CyberShield Quarantine Role"
                 });
             }
             cfg.quarantineRoleId = qRole.id;
 
+          
             // Quarantine channel (duplicate-proof)
             let qChannel = null;
             if (cfg.quarantineChannelId) {
@@ -887,7 +889,7 @@ client.on("interactionCreate", async (int) => {
             if (!mutedRole) {
                 mutedRole = await int.guild.roles.create({
                     name: "Muted",
-                    color: 0x808080,
+                    colors: ['#0x808080'],
                     reason: "CyberShield Muted Role"
                 });
             }
@@ -914,8 +916,8 @@ client.on("interactionCreate", async (int) => {
             const target = int.options.getMember("user");
             const reason = int.options.getString("reason") || "No reason provided";
 
-            if (!target) return int.reply({ content: "User not found.", ephemeral: true });
-            if (!target.kickable) return int.reply({ content: "❌ I cannot kick this user.", ephemeral: true });
+            if (!target) return int.reply({ content: "User not found.", flags: MessageFlags.Ephemeral });
+            if (!target.kickable) return int.reply({ content: "❌ I cannot kick this user.", flags: MessageFlags.Ephemeral });
 
             await target.kick(reason);
             await int.reply(`Kicked ${target.user.tag}\nReason: ${reason}`);
@@ -931,8 +933,8 @@ client.on("interactionCreate", async (int) => {
         }
             const reason = int.options.getString("reason") || "No reason provided";
 
-            if (!target) return int.reply({ content: "User not found.", ephemeral: true });
-            if (!target.bannable) return int.reply({ content: "❌ I cannot ban this user.", ephemeral: true });
+            if (!target) return int.reply({ content: "User not found.", flags: MessageFlags.Ephemeral });
+            if (!target.bannable) return int.reply({ content: "❌ I cannot ban this user.", flags: MessageFlags.Ephemeral });
 
             await target.ban({ reason });
             await int.reply(`Banned ${target.user.tag}\nReason: ${reason}`);
@@ -945,8 +947,8 @@ client.on("interactionCreate", async (int) => {
 
             const member = int.guild.members.cache.get(targetUser.id) ||
                 await int.guild.members.fetch(targetUser.id).catch(() => null);
-            if (!member) return int.reply({ content: "User not found.", ephemeral: true });
-            if (!member.bannable) return int.reply({ content: "❌ I cannot softban this user.", ephemeral: true });
+            if (!member) return int.reply({ content: "User not found.", flags: MessageFlags.Ephemeral });
+            if (!member.bannable) return int.reply({ content: "❌ I cannot softban this user.", flags: MessageFlags.Ephemeral });
 
             await member.ban({ reason, deleteMessageSeconds: 7 * 24 * 60 * 60 }).catch(() => null);
             await int.guild.members.unban(targetUser.id, "Softban unban").catch(() => null);
@@ -960,8 +962,8 @@ client.on("interactionCreate", async (int) => {
             const minutes = int.options.getInteger("minutes");
             const reason = int.options.getString("reason") || "No reason provided";
 
-            if (!member) return int.reply({ content: "User not found.", ephemeral: true });
-            if (!member.moderatable) return int.reply({ content: "❌ I cannot timeout this user.", ephemeral: true });
+            if (!member) return int.reply({ content: "User not found.", flags: MessageFlags.Ephemeral });
+            if (!member.moderatable) return int.reply({ content: "❌ I cannot timeout this user.", flags: MessageFlags.Ephemeral });
 
             const ms = Math.max(1, minutes) * 60 * 1000;
             await member.timeout(ms, reason).catch(() => null);
@@ -972,7 +974,7 @@ client.on("interactionCreate", async (int) => {
 
         if (int.commandName === "untimeout") {
             const member = int.options.getMember("user");
-            if (!member) return int.reply({ content: "User not found.", ephemeral: true });
+            if (!member) return int.reply({ content: "User not found.", flags: MessageFlags.Ephemeral });
 
             await member.timeout(null, "Timeout removed").catch(() => null);
             await int.reply(`Removed timeout from ${member.user.tag}.`);
@@ -983,7 +985,7 @@ client.on("interactionCreate", async (int) => {
             const member = int.options.getMember("user");
             const reason = int.options.getString("reason") || "No reason provided";
 
-            if (!member) return int.reply({ content: "User not found.", ephemeral: true });
+            if (!member) return int.reply({ content: "User not found.", flags: MessageFlags.Ephemeral });
 
             let mutedRole = int.guild.roles.cache.get(cfg.mutedRoleId);
             if (!mutedRole) {
@@ -991,7 +993,7 @@ client.on("interactionCreate", async (int) => {
                 if (!mutedRole) {
                     mutedRole = await int.guild.roles.create({
                         name: "Muted",
-                        color: 0x808080,
+                        colors: ['#0x808080'],
                         reason: "CyberShield Muted Role"
                     });
                 }
@@ -1005,11 +1007,11 @@ client.on("interactionCreate", async (int) => {
 
         if (int.commandName === "unmute") {
             const member = int.options.getMember("user");
-            if (!member) return int.reply({ content: "User not found.", ephemeral: true });
+            if (!member) return int.reply({ content: "User not found.", flags: MessageFlags.Ephemeral });
 
             const mutedRole = int.guild.roles.cache.get(cfg.mutedRoleId) ||
                 int.guild.roles.cache.find(r => r.name === "Muted");
-            if (!mutedRole) return int.reply({ content: "Muted role not found.", ephemeral: true });
+            if (!mutedRole) return int.reply({ content: "Muted role not found.", flags: MessageFlags.Ephemeral });
 
             await member.roles.remove(mutedRole).catch(() => null);
             await int.reply(`Unmuted ${member.user.tag}.`);
@@ -1020,7 +1022,7 @@ client.on("interactionCreate", async (int) => {
             const member = int.options.getMember("user");
             const reason = int.options.getString("reason");
 
-            if (!member) return int.reply({ content: "User not found.", ephemeral: true });
+            if (!member) return int.reply({ content: "User not found.", flags: MessageFlags.Ephemeral });
 
             const data = {
                 reason,
@@ -1035,11 +1037,11 @@ client.on("interactionCreate", async (int) => {
 
         if (int.commandName === "warnings") {
             const member = int.options.getMember("user");
-            if (!member) return int.reply({ content: "User not found.", ephemeral: true });
+            if (!member) return int.reply({ content: "User not found.", flags: MessageFlags.Ephemeral });
 
             const warns = getWarnings(cfg, member.id);
             if (!warns.length) {
-                return int.reply({ content: `${member.user.tag} has no warnings.`, ephemeral: true });
+                return int.reply({ content: `${member.user.tag} has no warnings.`, flags: MessageFlags.Ephemeral });
             }
 
             const lines = warns.map((w, i) => {
@@ -1053,12 +1055,12 @@ client.on("interactionCreate", async (int) => {
                 .setDescription(lines.join("\n\n"))
                 .setColor(0xf1c40f);
 
-            await int.reply({ embeds: [embed], ephemeral: true });
+            await int.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
         }
 
         if (int.commandName === "clearwarnings") {
             const member = int.options.getMember("user");
-            if (!member) return int.reply({ content: "User not found.", ephemeral: true });
+            if (!member) return int.reply({ content: "User not found.", flags: MessageFlags.Ephemeral });
 
             clearWarnings(cfg, member.id);
             await int.reply(`Cleared all warnings for ${member.user.tag}.`);
@@ -1084,7 +1086,7 @@ client.on("interactionCreate", async (int) => {
         if (int.commandName === "slowmode") {
             const seconds = int.options.getInteger("seconds");
             if (seconds < 0 || seconds > 21600) {
-                return int.reply({ content: "Slowmode must be between 0 and 21600 seconds.", ephemeral: true });
+                return int.reply({ content: "Slowmode must be between 0 and 21600 seconds.", flags: MessageFlags.Ephemeral });
             }
 
             await int.channel.setRateLimitPerUser(seconds, `Set by ${int.user.tag}`).catch(() => null);
@@ -1095,13 +1097,13 @@ client.on("interactionCreate", async (int) => {
         if (int.commandName === "purge") {
             const amount = int.options.getInteger("amount");
             if (amount < 1 || amount > 100) {
-                return int.reply({ content: "Amount must be between 1 and 100.", ephemeral: true });
+                return int.reply({ content: "Amount must be between 1 and 100.", flags: MessageFlags.Ephemeral });
             }
 
             const deleted = await int.channel.bulkDelete(amount, true).catch(() => null);
             const count = deleted ? deleted.size : 0;
 
-            await int.reply({ content: `Cleared ${count} messages.`, ephemeral: true });
+            await int.reply({ content: `Cleared ${count} messages.`, flags: MessageFlags.Ephemeral });
             await sendLog(int.guild, "Messages Purged", `${int.user.tag} purged ${count} messages in #${int.channel.name}`, int.user, "low");
         }
 
@@ -1158,11 +1160,11 @@ client.on("interactionCreate", async (int) => {
             const role = int.options.getRole("role");
 
             if (!member || !role) {
-                return int.reply({ content: "Invalid user or role.", ephemeral: true });
+                return int.reply({ content: "Invalid user or role.", flags: MessageFlags.Ephemeral });
             }
 
             if (!int.guild.members.me.permissions.has(PermissionsBitField.Flags.ManageRoles)) {
-                return int.reply({ content: "❌ I need Manage Roles permission.", ephemeral: true });
+                return int.reply({ content: "❌ I need Manage Roles permission.", flags: MessageFlags.Ephemeral });
             }
 
             await member.roles.add(role).catch(() => null);
@@ -1175,11 +1177,11 @@ client.on("interactionCreate", async (int) => {
             const role = int.options.getRole("role");
 
             if (!member || !role) {
-                return int.reply({ content: "Invalid user or role.", ephemeral: true });
+                return int.reply({ content: "Invalid user or role.", flags: MessageFlags.Ephemeral });
             }
 
             if (!int.guild.members.me.permissions.has(PermissionsBitField.Flags.ManageRoles)) {
-                return int.reply({ content: "❌ I need Manage Roles permission.", ephemeral: true });
+                return int.reply({ content: "❌ I need Manage Roles permission.", flags: MessageFlags.Ephemeral });
             }
 
             await member.roles.remove(role).catch(() => null);
@@ -1195,7 +1197,7 @@ client.on("interactionCreate", async (int) => {
             const enabled = int.options.getBoolean("enabled");
 
             if (channel && channel.type !== ChannelType.GuildText) {
-                return int.reply({ content: "Channel must be a text channel.", ephemeral: true });
+                return int.reply({ content: "Channel must be a text channel.", flags: MessageFlags.Ephemeral });
             }
 
             if (channel) cfg.welcome.channelId = channel.id;
@@ -1220,13 +1222,13 @@ client.on("interactionCreate", async (int) => {
             const reason = int.options.getString("reason") || "No reason provided";
 
             if (!cfg.quarantineRoleId || !cfg.quarantineChannelId) {
-                return int.reply({ content: "Quarantine system is not configured. Run /setup.", ephemeral: true });
+                return int.reply({ content: "Quarantine system is not configured. Run /setup.", flags: MessageFlags.Ephemeral });
             }
 
             const qChannel = int.guild.channels.cache.get(cfg.quarantineChannelId);
 
             if (!member || !qChannel) {
-                return int.reply({ content: "Quarantine role or channel is missing.", ephemeral: true });
+                return int.reply({ content: "Quarantine role or channel is missing.", flags: MessageFlags.Ephemeral });
             }
 
             await applyQuarantine(cfg, member, "staff");
@@ -1243,12 +1245,12 @@ client.on("interactionCreate", async (int) => {
             const reason = int.options.getString("reason") || "No reason provided";
 
             if (!cfg.quarantineRoleId) {
-                return int.reply({ content: "Quarantine system is not configured. Run /setup.", ephemeral: true });
+                return int.reply({ content: "Quarantine system is not configured. Run /setup.", flags: MessageFlags.Ephemeral });
             }
 
             const qRole = int.guild.roles.cache.get(cfg.quarantineRoleId);
             if (!member || !qRole) {
-                return int.reply({ content: "Quarantine role or user is missing.", ephemeral: true });
+                return int.reply({ content: "Quarantine role or user is missing.", flags: MessageFlags.Ephemeral });
             }
 
             await member.roles.remove(qRole).catch(() => null);
@@ -1284,7 +1286,7 @@ client.on("interactionCreate", async (int) => {
 
         if (isUnquarantineRequestCommand) {
             if (!cfg.quarantineRoleId || !cfg.quarantineChannelId || !cfg.unquarantineRequestsChannelId) {
-                return int.reply({ content: "Quarantine system is not configured. Ask staff to run /setup.", ephemeral: true });
+                return int.reply({ content: "Quarantine system is not configured. Ask staff to run /setup.", flags: MessageFlags.Ephemeral });
             }
 
             const qRole = int.guild.roles.cache.get(cfg.quarantineRoleId)
@@ -1297,15 +1299,15 @@ client.on("interactionCreate", async (int) => {
                 || await int.guild.members.fetch(int.user.id).catch(() => null);
 
             if (!qRole || !qChannel || !reqChannel || !member) {
-                return int.reply({ content: "Quarantine system channels or roles are missing.", ephemeral: true });
+                return int.reply({ content: "Quarantine system channels or roles are missing.", flags: MessageFlags.Ephemeral });
             }
 
             if (int.channel.id !== qChannel.id) {
-                return int.reply({ content: "You can only use this command in the quarantine channel.", ephemeral: true });
+                return int.reply({ content: "You can only use this command in the quarantine channel.", flags: MessageFlags.Ephemeral });
             }
 
             if (!member.roles.cache.has(qRole.id)) {
-                return int.reply({ content: "You must be quarantined to use this command.", ephemeral: true });
+                return int.reply({ content: "You must be quarantined to use this command.", flags: MessageFlags.Ephemeral });
             }
 
             const reason = int.options.getString("reason");
@@ -1338,22 +1340,22 @@ client.on("interactionCreate", async (int) => {
             }).catch(() => null);
 
             if (!msg) {
-                return int.reply({ content: "Could not create request. Please tell staff.", ephemeral: true });
+                return int.reply({ content: "Could not create request. Please tell staff.", flags: MessageFlags.Ephemeral });
             }
 
-            await int.reply({ content: "Your unquarantine request has been sent to staff.", ephemeral: true });
+            await int.reply({ content: "Your unquarantine request has been sent to staff.", flags: MessageFlags.Ephemeral });
             await sendLog(int.guild, "Unquarantine Request", `${int.user.tag} submitted an unquarantine request.`, int.user, "medium");
         }
 
         if (int.commandName === "shieldpanel") {
             const embed = buildPanelEmbed(int.guild, cfg, false);
             const rows = buildPanelButtons(false);
-            await int.reply({ embeds: [embed], components: rows, ephemeral: true });
+            await int.reply({ embeds: [embed], components: rows, flags: MessageFlags.Ephemeral });
         }
     } catch (err) {
         console.error(err);
         if (!int.replied) {
-            int.reply({ content: "❌ An error occurred while executing that command.", ephemeral: true }).catch(() => null);
+            int.reply({ content: "❌ An error occurred while executing that command.", flags: MessageFlags.Ephemeral }).catch(() => null);
         }
     }
 });
@@ -1370,7 +1372,7 @@ async function handleButtonInteraction(int) {
     const isStaff = cfg.staffRoleId && int.member.roles.cache.has(cfg.staffRoleId);
 
     if (!(isOwner || isWhitelisted || isStaff)) {
-        return int.reply({ content: "❌ You are not authorized to use this.", ephemeral: true });
+        return int.reply({ content: "❌ You are not authorized to use this.", flags: MessageFlags.Ephemeral });
     }
 
     if (int.customId.startsWith("panel_")) {
@@ -1388,7 +1390,7 @@ async function handleButtonInteraction(int) {
         }
 
         if (!session) {
-            return int.reply({ content: "No active edit session. Use /shieldpanel again.", ephemeral: true });
+            return int.reply({ content: "No active edit session. Use /shieldpanel again.", flags: MessageFlags.Ephemeral });
         }
 
         const sec = session.draftSecurity;
@@ -1438,16 +1440,16 @@ async function handleButtonInteraction(int) {
 
     const member = await int.guild.members.fetch(userId).catch(() => null);
     if (!member) {
-        return int.reply({ content: "User not found.", ephemeral: true });
+        return int.reply({ content: "User not found.", flags: MessageFlags.Ephemeral });
     }
 
     if (!cfg.quarantineRoleId) {
-        return int.reply({ content: "Quarantine system is not configured.", ephemeral: true });
+        return int.reply({ content: "Quarantine system is not configured.", flags: MessageFlags.Ephemeral });
     }
 
     const qRole = int.guild.roles.cache.get(cfg.quarantineRoleId);
     if (!qRole) {
-        return int.reply({ content: "Quarantine role is missing.", ephemeral: true });
+        return int.reply({ content: "Quarantine role is missing.", flags: MessageFlags.Ephemeral });
     }
 
     if (action === "accept") {
