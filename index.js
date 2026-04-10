@@ -25,7 +25,7 @@ const {
 } = require("discord.js");
 const express = require("express");
 const { MessageFlags } = require('discord.js');
-const { SlashCommandBuilder } = require("discord.js");
+
 
 process.on("unhandledRejection", (reason) => {
     console.error("Unhandled promise rejection:", reason);
