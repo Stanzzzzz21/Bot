@@ -25,6 +25,14 @@ const {
 } = require("discord.js");
 const express = require("express");
 
+process.on("unhandledRejection", (reason) => {
+    console.error("Unhandled promise rejection:", reason);
+});
+
+process.on("uncaughtException", (error) => {
+    console.error("Uncaught exception:", error);
+});
+
 // -----------------------
 // 1. Keep-Alive Web Server
 // -----------------------
