@@ -58,13 +58,12 @@ const emojiCreateTracker = new Collection();
 const threadCreateTracker = new Collection();
 const webhookCreateTracker = new Collection();
 const panelEditSessions = new Collection();
+const setupLocks = new Set();
 
 const WHITELIST = ["876731494805155851"]; // your IDs here
-const WEBSITE_URL = "https://cyber-shield-gray.vercel.app/";
 const UNQUARANTINE_REQUEST_COMMANDS = new Set([
     "unquarantine_request"
 ]);
-
 // -----------------------
 // 3. Slash Commands
 // -----------------------
@@ -358,15 +357,7 @@ const commands = [
 
     new SlashCommandBuilder()
  
-        .setName("shieldpanel")
-        .setDescription("Open the CyberShield settings dashboard")
-].map(c => c.toJSON());
-
-// -----------------------
-// 4. Config & Helpers
-// -----------------------
-function getGuildConfig(guild) {
-    let cfg = guildConfig.get(guild.id);
+       
     if (!cfg) {
         cfg = {
             staffRoleId: null,
@@ -772,23 +763,22 @@ client.on("interactionCreate", async (int) => {
             let logChannel = null;
             if (cfg.logChannelId) {
                 logChannel = int.guild.channels.cache.get(cfg.logChannelId)
-                    || await int.guild.channels.fetch(cfg.logChannelId).catch(() => null);
+                    // SETUP
+        if (int.commandName === "setup") {
+            if (setupLocks.has(int.guild.id)) {
+                return int.reply({ content: "Setup is already running for this server. Please wait a few seconds and try again.", ephemeral: true });
             }
-            if (!logChannel) {
-                logChannel = int.guild.channels.cache.find(
-                    c => c.name === "shield-logs" && c.type === ChannelType.GuildText
-                );
-            }
-            if (!logChannel) {
-                logChannel = await int.guild.channels.create({
-                    name: "shield-logs",
-                    type: ChannelType.GuildText,
-                    permissionOverwrites: [
-                        {
-                            id: int.guild.roles.everyone.id,
-                            deny: [PermissionsBitField.Flags.ViewChannel]
-                        },
-                        {
+
+            setupLocks.add(int.guild.id);
+
+            try {
+                const role = int.options.getRole("staff_role");
+
+                await int.guild.channels.fetch().catch(() => null);
+                await int.guild.roles.fetch().catch(() => null);
+
+                // Logs channel (duplicate-proof)
+                let logChannel = null;
                             id: role.id,
                             allow: [PermissionsBitField.Flags.ViewChannel]
                         }
@@ -926,8 +916,11 @@ client.on("interactionCreate", async (int) => {
 
         if (int.commandName === "ban") {
             const targetUser = int.options.getUser("user");
-            const target = int.guild.members.cache.get(targetUser.id) ||
-                await int.guild.members.fetch(targetUser.id).catch(() => null);
+                     await sendLog(int.guild, "Setup Completed", `Setup run by ${int.user.tag}`, int.user, "medium");
+            } finally {
+                setupLocks.delete(int.guild.id);
+            }
+        }
             const reason = int.options.getString("reason") || "No reason provided";
 
             if (!target) return int.reply({ content: "User not found.", ephemeral: true });
