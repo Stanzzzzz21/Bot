@@ -692,6 +692,7 @@ client.on("guildCreate", async (guild) => {
         "CyberShield has joined this server.",
         "",
         "Recommended settings:",
+        "- #IMPORTANT **Make sure the bots role is high so moderation commands work**"
         "- Give CyberShield Administrator or strong moderation permissions.",
         "- Run /setup to link your staff role and create logs and quarantine.",
         "- Keep Anti-Raid, Anti-Nuke, Anti-Spam, Anti-Mass-Mention and Webhook Guard enabled.",
