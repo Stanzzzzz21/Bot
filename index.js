@@ -370,6 +370,7 @@ const commands = [
 ];
 
 
+
 // CONFIG SYSTEM (FIXED STRUCTURE)
 if (!cfg) {
     cfg = {
