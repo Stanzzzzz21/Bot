@@ -328,7 +328,7 @@ const commands = [
              .setRequired(false)
         ),
 
-    new SlashCommandBuilder()
+new SlashCommandBuilder()
         .setName("quarantine")
         .setDescription("Place a user into quarantine")
         .addUserOption(o =>
@@ -342,9 +342,6 @@ const commands = [
              .setRequired(false)
         ),
 
-
-
-const commands = [
     new SlashCommandBuilder()
         .setName("unquarantine")
         .setDescription("Remove a user from quarantine")
@@ -368,6 +365,8 @@ const commands = [
              .setRequired(true)
         )
 ];
+
+
 
 
 
