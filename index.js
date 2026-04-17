@@ -14,17 +14,14 @@ const {
 const fs = require("fs");
 const path = require("path");
 
-// Use Render env vars (supports multiple common names)
-const TOKEN =
-    process.env.DISCORD_TOKEN ||
-    process.env.BOT_TOKEN ||
-    process.env.TOKEN;
-
+// ===== TOKEN FROM ENV (Render-safe) =====
+const TOKEN = process.env.DISCORD_TOKEN;
 if (!TOKEN) {
-    console.error("No Discord token found in environment variables (DISCORD_TOKEN / BOT_TOKEN / TOKEN).");
+    console.error("Missing DISCORD_TOKEN environment variable.");
     process.exit(1);
 }
 
+// ===== CLIENT =====
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -36,6 +33,9 @@ const client = new Client({
     partials: [Partials.Message, Partials.Channel, Partials.GuildMember]
 });
 
+client.commands = new Collection();
+
+// ===== CONFIG FILE =====
 const configPath = path.join(__dirname, "cybershield_config.json");
 let config = {};
 try {
@@ -46,7 +46,6 @@ try {
     console.error("Failed to read config file:", e.message);
     config = {};
 }
-
 if (!config.guilds) config.guilds = {};
 if (!config.quarantineData) config.quarantineData = {};
 if (!config.unqRequests) config.unqRequests = {};
@@ -59,11 +58,7 @@ function saveConfig() {
     }
 }
 
-client.commands = new Collection();
-
-/* ============================================================
-   UTIL: SAFE EPHEMERAL
-============================================================ */
+// ===== UTIL: SAFE EPHEMERAL =====
 function safeReply(int, data) {
     return int.reply({ ...data, flags: 64 }).catch(() => {});
 }
@@ -71,9 +66,7 @@ function safeEdit(int, data) {
     return int.editReply({ ...data, flags: 64 }).catch(() => {});
 }
 
-/* ============================================================
-   UTIL: PER-GUILD CONFIG
-============================================================ */
+// ===== UTIL: PER-GUILD CONFIG =====
 function getGuildConfig(guildId) {
     if (!config.guilds[guildId]) {
         config.guilds[guildId] = {
@@ -101,9 +94,7 @@ function getGuildConfig(guildId) {
     return config.guilds[guildId];
 }
 
-/* ============================================================
-   UTIL: ENSURE CHANNEL / ROLE (NO DUPES)
-============================================================ */
+// ===== UTIL: ENSURE CHANNEL / ROLE =====
 async function ensureChannel(guild, name, type = ChannelType.GuildText) {
     try {
         let existing = guild.channels.cache.find(
@@ -132,9 +123,7 @@ async function ensureRole(guild, name, options = {}) {
     }
 }
 
-/* ============================================================
-   UTIL: LOGGING
-============================================================ */
+// ===== UTIL: LOGGING =====
 async function logToShield(guild, embedData) {
     const channel = await ensureChannel(guild, "shield-logs", ChannelType.GuildText);
     if (!channel) return;
@@ -142,9 +131,7 @@ async function logToShield(guild, embedData) {
     channel.send({ embeds: [embed] }).catch(() => {});
 }
 
-/* ============================================================
-   WELCOME
-============================================================ */
+// ===== WELCOME =====
 async function sendWelcome(member) {
     const guild = member.guild;
     const me = guild.members.me;
@@ -175,9 +162,7 @@ Staff can quarantine, mute, and moderate instantly as long as my role is high in
     channel.send({ embeds: [embed] }).catch(() => {});
 }
 
-/* ============================================================
-   QUARANTINE SYSTEM
-============================================================ */
+// ===== QUARANTINE SYSTEM =====
 async function getQuarantineRole(guild) {
     return await ensureRole(guild, "Quarantined", { color: "#ff0000", permissions: [] });
 }
@@ -317,9 +302,7 @@ async function unquarantineUser(guild, member, staffUser = null, reason = "Unqua
     );
 }
 
-/* ============================================================
-   UNQUARANTINE REQUEST SYSTEM
-============================================================ */
+// ===== UNQUARANTINE REQUEST SYSTEM =====
 async function createUnqRequest(interaction, reason) {
     const guild = interaction.guild;
     const member = interaction.member;
@@ -382,9 +365,7 @@ async function createUnqRequest(interaction, reason) {
     return safeReply(interaction, { content: "Your unquarantine request has been sent to staff." });
 }
 
-/* ============================================================
-   GHOST PING DETECTION (NON-BOT)
-============================================================ */
+// ===== GHOST PING DETECTION =====
 client.on("messageDelete", async message => {
     try {
         if (!message.guild) return;
@@ -413,9 +394,7 @@ client.on("messageDelete", async message => {
     }
 });
 
-/* ============================================================
-   ANTI-SPAM / ANTI-LINK / ANTI-INVITE / ANTI-MASS-MENTION
-============================================================ */
+// ===== ANTI-SPAM / ANTI-LINK / ANTI-INVITE / ANTI-MASS-MENTION =====
 const msgBuckets = new Map(); // guildId-userId -> { messages: [] }
 
 function getBucket(guildId, userId) {
@@ -529,9 +508,7 @@ client.on("messageCreate", async message => {
     }
 });
 
-/* ============================================================
-   ANTI-RAID / ANTI-NUKE (BASIC)
-============================================================ */
+// ===== ANTI-RAID / ANTI-NUKE (BASIC) =====
 const joinBuckets = new Map(); // guildId -> [timestamps]
 const actionBuckets = new Map(); // guildId-executorId -> [timestamps]
 
@@ -697,9 +674,7 @@ async function removeLockdown(guild) {
     );
 }
 
-/* ============================================================
-   BASIC AUDIT-BASED ANTI-NUKE HOOKS
-============================================================ */
+// ===== BASIC AUDIT-BASED ANTI-NUKE HOOKS =====
 async function trackAudit(guild, typeLabel) {
     try {
         const logs = await guild.fetchAuditLogs({ limit: 1 });
@@ -732,9 +707,7 @@ client.on("guildBanAdd", ban => {
     trackAudit(ban.guild, "guildBanAdd");
 });
 
-/* ============================================================
-   SLASH COMMAND REGISTRATION
-============================================================ */
+// ===== SLASH COMMAND REGISTRATION =====
 client.on("ready", async () => {
     console.log(`Logged in as ${client.user.tag}`);
 
@@ -905,9 +878,7 @@ client.on("ready", async () => {
     }
 });
 
-/* ============================================================
-   INTERACTION HANDLER
-============================================================ */
+// ===== INTERACTION HANDLER =====
 client.on("interactionCreate", async interaction => {
     if (interaction.isChatInputCommand()) {
         const { commandName } = interaction;
@@ -1170,6 +1141,5 @@ client.on("interactionCreate", async interaction => {
     }
 });
 
-/* ============================================================
-   LOGIN
-============================================================ */
+// ===== LOGIN (single, clean) =====
+client.login(TOKEN);
