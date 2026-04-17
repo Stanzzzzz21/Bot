@@ -1142,7 +1142,7 @@ client.on("interactionCreate", async interaction => {
 });
 
 // ===== LOGIN (single, clean, with clear logging) =====
-const TOKEN = process.env.DISCORD_TOKEN;
+
 
 if (!TOKEN) {
     console.error("DISCORD_TOKEN is missing. Set it in Render → Environment.");
@@ -1159,4 +1159,3 @@ client.login(TOKEN)
         console.error(err);
         process.exit(1);
     });
-
