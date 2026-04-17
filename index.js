@@ -94,6 +94,7 @@ function getGuildConfig(guildId) {
     return config.guilds[guildId];
 }
 
+
 // ===== UTIL: ENSURE CHANNEL / ROLE =====
 async function ensureChannel(guild, name, type = ChannelType.GuildText) {
     try {
@@ -879,11 +880,254 @@ client.on("ready", async () => {
 });
 
 // ===== INTERACTION HANDLER =====
+// ===== SLASH COMMAND REGISTRATION =====
+client.on("ready", async () => {
+    console.log(`Logged in as ${client.user.tag}`);
+
+    const data = [
+        {
+            name: "shieldinfo",
+            description: "Show CyberShield info and setup tips."
+        },
+        {
+            name: "setup",
+            description: "Run the CyberShield setup wizard (channels, roles, config).",
+            default_member_permissions: PermissionsBitField.Flags.ManageGuild.toString(),
+            dm_permission: false
+        },
+        {
+            name: "shield-panel",
+            description: "Open the CyberShield control panel.",
+            default_member_permissions: PermissionsBitField.Flags.ManageGuild.toString(),
+            dm_permission: false
+        },
+        {
+            name: "config",
+            description: "Configure CyberShield thresholds and timings.",
+            default_member_permissions: PermissionsBitField.Flags.ManageGuild.toString(),
+            dm_permission: false,
+            options: [
+                {
+                    name: "spam_window_ms",
+                    description: "Spam window in ms (default 7000).",
+                    type: 4,
+                    required: false
+                },
+                {
+                    name: "spam_msg_threshold",
+                    description: "Messages in window before spam triggers (default 6).",
+                    type: 4,
+                    required: false
+                },
+                {
+                    name: "spam_mention_threshold",
+                    description: "Mentions in one message before mass mention triggers (default 6).",
+                    type: 4,
+                    required: false
+                },
+                {
+                    name: "raid_window_ms",
+                    description: "Join spike window in ms (default 15000).",
+                    type: 4,
+                    required: false
+                },
+                {
+                    name: "raid_threshold",
+                    description: "Joins in window before anti-raid triggers (default 8).",
+                    type: 4,
+                    required: false
+                },
+                {
+                    name: "nuke_window_ms",
+                    description: "Nuke detection window in ms (default 15000).",
+                    type: 4,
+                    required: false
+                },
+                {
+                    name: "nuke_threshold",
+                    description: "Actions in window before anti-nuke triggers (default 6).",
+                    type: 4,
+                    required: false
+                }
+            ]
+        },
+        {
+            name: "security",
+            description: "Show current CyberShield security posture.",
+            default_member_permissions: PermissionsBitField.Flags.ManageGuild.toString(),
+            dm_permission: false
+        },
+        {
+            name: "quarantine",
+            description: "Quarantine a member (strip roles and apply quarantine role).",
+            default_member_permissions: PermissionsBitField.Flags.ModerateMembers.toString(),
+            dm_permission: false,
+            options: [
+                {
+                    name: "user",
+                    description: "User to quarantine",
+                    type: 6,
+                    required: true
+                },
+                {
+                    name: "reason",
+                    description: "Reason for quarantine",
+                    type: 3,
+                    required: false
+                }
+            ]
+        },
+        {
+            name: "unquarantine",
+            description: "Unquarantine a member and restore their roles.",
+            default_member_permissions: PermissionsBitField.Flags.ModerateMembers.toString(),
+            dm_permission: false,
+            options: [
+                {
+                    name: "user",
+                    description: "User to unquarantine",
+                    type: 6,
+                    required: true
+                },
+                {
+                    name: "reason",
+                    description: "Reason for unquarantine",
+                    type: 3,
+                    required: false
+                }
+            ]
+        },
+        {
+            name: "request-unquarantine",
+            description: "Request to be unquarantined (quarantined users only).",
+            dm_permission: false,
+            options: [
+                {
+                    name: "reason",
+                    description: "Why you should be unquarantined",
+                    type: 3,
+                    required: false
+                }
+            ]
+        },
+        {
+            name: "lockdown",
+            description: "Enable server lockdown.",
+            default_member_permissions: PermissionsBitField.Flags.ManageGuild.toString(),
+            dm_permission: false,
+            options: [
+                {
+                    name: "reason",
+                    description: "Reason for lockdown",
+                    type: 3,
+                    required: false
+                }
+            ]
+        },
+        {
+            name: "unlock",
+            description: "Disable server lockdown.",
+            default_member_permissions: PermissionsBitField.Flags.ManageGuild.toString(),
+            dm_permission: false
+        },
+        {
+            name: "timeout",
+            description: "Timeout a member.",
+            default_member_permissions: PermissionsBitField.Flags.ModerateMembers.toString(),
+            dm_permission: false,
+            options: [
+                {
+                    name: "user",
+                    description: "User to timeout",
+                    type: 6,
+                    required: true
+                },
+                {
+                    name: "minutes",
+                    description: "Duration in minutes",
+                    type: 4,
+                    required: true
+                },
+                {
+                    name: "reason",
+                    description: "Reason",
+                    type: 3,
+                    required: false
+                }
+            ]
+        },
+        {
+            name: "kick",
+            description: "Kick a member.",
+            default_member_permissions: PermissionsBitField.Flags.KickMembers.toString(),
+            dm_permission: false,
+            options: [
+                {
+                    name: "user",
+                    description: "User to kick",
+                    type: 6,
+                    required: true
+                },
+                {
+                    name: "reason",
+                    description: "Reason",
+                    type: 3,
+                    required: false
+                }
+            ]
+        },
+        {
+            name: "ban",
+            description: "Ban a member.",
+            default_member_permissions: PermissionsBitField.Flags.BanMembers.toString(),
+            dm_permission: false,
+            options: [
+                {
+                    name: "user",
+                    description: "User to ban",
+                    type: 6,
+                    required: true
+                },
+                {
+                    name: "reason",
+                    description: "Reason",
+                    type: 3,
+                    required: false
+                }
+            ]
+        },
+        {
+            name: "unban",
+            description: "Unban a user by ID.",
+            default_member_permissions: PermissionsBitField.Flags.BanMembers.toString(),
+            dm_permission: false,
+            options: [
+                {
+                    name: "userid",
+                    description: "User ID to unban",
+                    type: 3,
+                    required: true
+                }
+            ]
+        }
+    ];
+
+    for (const guild of client.guilds.cache.values()) {
+        await guild.commands.set(data).catch(err => {
+            console.log(`Failed to register commands in ${guild.name}:`, err.message);
+        });
+    }
+});
+
+// ===== INTERACTION HANDLER =====
 client.on("interactionCreate", async interaction => {
+    // ----- SLASH COMMANDS -----
     if (interaction.isChatInputCommand()) {
         const { commandName } = interaction;
 
+        // /shieldinfo
         if (commandName === "shieldinfo") {
+            const gConf = getGuildConfig(interaction.guild.id);
             const embed = new EmbedBuilder()
                 .setTitle("CyberShield MAX")
                 .setColor("Blue")
@@ -905,10 +1149,174 @@ client.on("interactionCreate", async interaction => {
 
 # IMPORTANT — Put CyberShield’s role near the top so moderation tools work.`
                 )
+                .addFields(
+                    { name: "Lockdown", value: gConf.lockdown ? "🛑 Enabled" : "✅ Disabled", inline: true },
+                    { name: "Setup Completed", value: gConf.setupCompleted ? "✅ Yes" : "❌ No", inline: true }
+                )
                 .setTimestamp();
 
             return safeReply(interaction, { embeds: [embed] });
         }
+
+        // /setup — setup wizard
+        if (commandName === "setup") {
+            if (!interaction.member.permissions.has(PermissionsBitField.Flags.ManageGuild)) {
+                return safeReply(interaction, { content: "You don't have permission to run setup." });
+            }
+
+            await interaction.deferReply({ flags: 64 }).catch(() => {});
+
+            const guild = interaction.guild;
+            const gConf = getGuildConfig(guild.id);
+
+            const qRole = await getQuarantineRole(guild);
+            const holdChannel = await ensureChannel(guild, "quarantine-hold", ChannelType.GuildText);
+            const unqChan = await getUnqRequestChannel(guild);
+            const approvalsChan = await ensureChannel(guild, "unquarantine-approvals", ChannelType.GuildText);
+            const logsChan = await ensureChannel(guild, "shield-logs", ChannelType.GuildText);
+
+            gConf.setupCompleted = true;
+            gConf.lastSetupBy = interaction.user.id;
+            gConf.lastSetupAt = Date.now();
+            saveConfig();
+
+            const embed = new EmbedBuilder()
+                .setTitle("CyberShield Setup Complete")
+                .setColor("Green")
+                .setDescription("CyberShield MAX has been set up for this server.")
+                .addFields(
+                    { name: "Quarantine Role", value: qRole ? qRole.toString() : "Failed to create", inline: true },
+                    { name: "Quarantine Hold", value: holdChannel ? holdChannel.toString() : "Failed to create", inline: true },
+                    { name: "Unquarantine Requests", value: unqChan ? unqChan.toString() : "Failed to create", inline: true },
+                    { name: "Unquarantine Approvals", value: approvalsChan ? approvalsChan.toString() : "Failed to create", inline: true },
+                    { name: "Shield Logs", value: logsChan ? logsChan.toString() : "Failed to create", inline: true }
+                )
+                .setTimestamp();
+
+            return safeEdit(interaction, { embeds: [embed] });
+        }
+
+        // /shield-panel — dashboard-style panel
+        if (commandName === "shield-panel") {
+            if (!interaction.member.permissions.has(PermissionsBitField.Flags.ManageGuild)) {
+                return safeReply(interaction, { content: "You don't have permission to open the shield panel." });
+            }
+
+            const gConf = getGuildConfig(interaction.guild.id);
+
+            const embed = new EmbedBuilder()
+                .setTitle("CyberShield Control Panel")
+                .setColor("Blue")
+                .setDescription("Dashboard-style overview of CyberShield’s core security posture.")
+                .addFields(
+                    { name: "Lockdown", value: gConf.lockdown ? "🛑 Enabled" : "✅ Disabled", inline: true },
+                    { name: "Raid Window (ms)", value: String(gConf.raidJoinWindowMs), inline: true },
+                    { name: "Raid Threshold", value: String(gConf.raidJoinThreshold), inline: true },
+                    { name: "Spam Window (ms)", value: String(gConf.spamWindowMs), inline: true },
+                    { name: "Spam Msg Threshold", value: String(gConf.spamMsgThreshold), inline: true },
+                    { name: "Spam Mention Threshold", value: String(gConf.spamMentionThreshold), inline: true },
+                    { name: "Nuke Window (ms)", value: String(gConf.nukeWindowMs), inline: true },
+                    { name: "Nuke Threshold", value: String(gConf.nukeThreshold), inline: true },
+                    { name: "Setup Completed", value: gConf.setupCompleted ? "✅ Yes" : "❌ No", inline: true }
+                )
+                .setTimestamp();
+
+            const row = new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId("panel_lockdown_on")
+                    .setLabel("Enable Lockdown")
+                    .setStyle(ButtonStyle.Danger),
+                new ButtonBuilder()
+                    .setCustomId("panel_lockdown_off")
+                    .setLabel("Disable Lockdown")
+                    .setStyle(ButtonStyle.Success),
+                new ButtonBuilder()
+                    .setCustomId("panel_view_config")
+                    .setLabel("View Config")
+                    .setStyle(ButtonStyle.Secondary),
+                new ButtonBuilder()
+                    .setCustomId("panel_run_setup")
+                    .setLabel("Run Setup")
+                    .setStyle(ButtonStyle.Primary)
+            );
+
+            return safeReply(interaction, { embeds: [embed], components: [row] });
+        }
+
+        // /config — adjust thresholds
+        if (commandName === "config") {
+            if (!interaction.member.permissions.has(PermissionsBitField.Flags.ManageGuild)) {
+                return safeReply(interaction, { content: "You don't have permission to change config." });
+            }
+
+            await interaction.deferReply({ flags: 64 }).catch(() => {});
+            const gConf = getGuildConfig(interaction.guild.id);
+
+            const spamWindowMs = interaction.options.getInteger("spam_window_ms");
+            const spamMsgThreshold = interaction.options.getInteger("spam_msg_threshold");
+            const spamMentionThreshold = interaction.options.getInteger("spam_mention_threshold");
+            const raidWindowMs = interaction.options.getInteger("raid_window_ms");
+            const raidThreshold = interaction.options.getInteger("raid_threshold");
+            const nukeWindowMs = interaction.options.getInteger("nuke_window_ms");
+            const nukeThreshold = interaction.options.getInteger("nuke_threshold");
+
+            if (spamWindowMs !== null) gConf.spamWindowMs = spamWindowMs;
+            if (spamMsgThreshold !== null) gConf.spamMsgThreshold = spamMsgThreshold;
+            if (spamMentionThreshold !== null) gConf.spamMentionThreshold = spamMentionThreshold;
+            if (raidWindowMs !== null) gConf.raidJoinWindowMs = raidWindowMs;
+            if (raidThreshold !== null) gConf.raidJoinThreshold = raidThreshold;
+            if (nukeWindowMs !== null) gConf.nukeWindowMs = nukeWindowMs;
+            if (nukeThreshold !== null) gConf.nukeThreshold = nukeThreshold;
+
+            saveConfig();
+
+            const embed = new EmbedBuilder()
+                .setTitle("CyberShield Config Updated")
+                .setColor("Green")
+                .setDescription("The following values are now active:")
+                .addFields(
+                    { name: "Raid Window (ms)", value: String(gConf.raidJoinWindowMs), inline: true },
+                    { name: "Raid Threshold", value: String(gConf.raidJoinThreshold), inline: true },
+                    { name: "Spam Window (ms)", value: String(gConf.spamWindowMs), inline: true },
+                    { name: "Spam Msg Threshold", value: String(gConf.spamMsgThreshold), inline: true },
+                    { name: "Spam Mention Threshold", value: String(gConf.spamMentionThreshold), inline: true },
+                    { name: "Nuke Window (ms)", value: String(gConf.nukeWindowMs), inline: true },
+                    { name: "Nuke Threshold", value: String(gConf.nukeThreshold), inline: true }
+                )
+                .setTimestamp();
+
+            return safeEdit(interaction, { embeds: [embed] });
+        }
+
+        // /security — posture summary
+        if (commandName === "security") {
+            if (!interaction.member.permissions.has(PermissionsBitField.Flags.ManageGuild)) {
+                return safeReply(interaction, { content: "You don't have permission to view security posture." });
+            }
+
+            const gConf = getGuildConfig(interaction.guild.id);
+
+            const embed = new EmbedBuilder()
+                .setTitle("CyberShield Security Posture")
+                .setColor("Purple")
+                .setDescription("High-level view of current security state.")
+                .addFields(
+                    { name: "Lockdown", value: gConf.lockdown ? "🛑 Enabled" : "✅ Disabled", inline: true },
+                    { name: "Raid Window (ms)", value: String(gConf.raidJoinWindowMs), inline: true },
+                    { name: "Raid Threshold", value: String(gConf.raidJoinThreshold), inline: true },
+                    { name: "Spam Window (ms)", value: String(gConf.spamWindowMs), inline: true },
+                    { name: "Spam Msg Threshold", value: String(gConf.spamMsgThreshold), inline: true },
+                    { name: "Spam Mention Threshold", value: String(gConf.spamMentionThreshold), inline: true },
+                    { name: "Nuke Window (ms)", value: String(gConf.nukeWindowMs), inline: true },
+                    { name: "Nuke Threshold", value: String(gConf.nukeThreshold), inline: true },
+                    { name: "Setup Completed", value: gConf.setupCompleted ? "✅ Yes" : "❌ No", inline: true }
+                )
+                .setTimestamp();
+
+            return safeReply(interaction, { embeds: [embed] });
+        }
+
+        // ===== MODERATION COMMANDS (existing behavior) =====
 
         if (commandName === "quarantine") {
             const target = interaction.options.getMember("user");
@@ -1090,9 +1498,11 @@ client.on("interactionCreate", async interaction => {
         }
     }
 
+    // ----- BUTTONS -----
     if (interaction.isButton()) {
         const id = interaction.customId;
 
+        // Unquarantine approvals/denials
         if (id.startsWith("unq_approve_") || id.startsWith("unq_deny_")) {
             if (!interaction.member.permissions.has(PermissionsBitField.Flags.ModerateMembers)) {
                 return safeReply(interaction, { content: "You don't have permission to handle unquarantine requests." });
@@ -1137,9 +1547,80 @@ client.on("interactionCreate", async interaction => {
 
             delete config.unqRequests[userId];
             saveConfig();
+            return;
+        }
+
+        // Shield panel buttons
+        if (id === "panel_lockdown_on" || id === "panel_lockdown_off" || id === "panel_view_config" || id === "panel_run_setup") {
+            if (!interaction.member.permissions.has(PermissionsBitField.Flags.ManageGuild)) {
+                return safeReply(interaction, { content: "You don't have permission to use the shield panel." });
+            }
+
+            const guild = interaction.guild;
+            const gConf = getGuildConfig(guild.id);
+
+            if (id === "panel_lockdown_on") {
+                await applyLockdown(guild, "Enabled via Shield Panel");
+                return interaction.update({ content: "🔒 Lockdown enabled via panel.", components: [], embeds: [] }).catch(() => {});
+            }
+
+            if (id === "panel_lockdown_off") {
+                await removeLockdown(guild);
+                return interaction.update({ content: "🔓 Lockdown disabled via panel.", components: [], embeds: [] }).catch(() => {});
+            }
+
+            if (id === "panel_view_config") {
+                const embed = new EmbedBuilder()
+                    .setTitle("CyberShield Config")
+                    .setColor("Blue")
+                    .addFields(
+                        { name: "Raid Window (ms)", value: String(gConf.raidJoinWindowMs), inline: true },
+                        { name: "Raid Threshold", value: String(gConf.raidJoinThreshold), inline: true },
+                        { name: "Spam Window (ms)", value: String(gConf.spamWindowMs), inline: true },
+                        { name: "Spam Msg Threshold", value: String(gConf.spamMsgThreshold), inline: true },
+                        { name: "Spam Mention Threshold", value: String(gConf.spamMentionThreshold), inline: true },
+                        { name: "Nuke Window (ms)", value: String(gConf.nukeWindowMs), inline: true },
+                        { name: "Nuke Threshold", value: String(gConf.nukeThreshold), inline: true },
+                        { name: "Lockdown", value: gConf.lockdown ? "🛑 Enabled" : "✅ Disabled", inline: true },
+                        { name: "Setup Completed", value: gConf.setupCompleted ? "✅ Yes" : "❌ No", inline: true }
+                    )
+                    .setTimestamp();
+
+                return interaction.update({ embeds: [embed], components: [] }).catch(() => {});
+            }
+
+            if (id === "panel_run_setup") {
+                // Reuse setup logic
+                const qRole = await getQuarantineRole(guild);
+                const holdChannel = await ensureChannel(guild, "quarantine-hold", ChannelType.GuildText);
+                const unqChan = await getUnqRequestChannel(guild);
+                const approvalsChan = await ensureChannel(guild, "unquarantine-approvals", ChannelType.GuildText);
+                const logsChan = await ensureChannel(guild, "shield-logs", ChannelType.GuildText);
+
+                gConf.setupCompleted = true;
+                gConf.lastSetupBy = interaction.user.id;
+                gConf.lastSetupAt = Date.now();
+                saveConfig();
+
+                const embed = new EmbedBuilder()
+                    .setTitle("CyberShield Setup Complete (via Panel)")
+                    .setColor("Green")
+                    .setDescription("Setup has been re-run from the Shield Panel.")
+                    .addFields(
+                        { name: "Quarantine Role", value: qRole ? qRole.toString() : "Failed to create", inline: true },
+                        { name: "Quarantine Hold", value: holdChannel ? holdChannel.toString() : "Failed to create", inline: true },
+                        { name: "Unquarantine Requests", value: unqChan ? unqChan.toString() : "Failed to create", inline: true },
+                        { name: "Unquarantine Approvals", value: approvalsChan ? approvalsChan.toString() : "Failed to create", inline: true },
+                        { name: "Shield Logs", value: logsChan ? logsChan.toString() : "Failed to create", inline: true }
+                    )
+                    .setTimestamp();
+
+                return interaction.update({ embeds: [embed], components: [] }).catch(() => {});
+            }
         }
     }
 });
+
 
 // ===== LOGIN (single, clean, with clear logging) =====
 
