@@ -14,8 +14,16 @@ const {
 const fs = require("fs");
 const path = require("path");
 
-const TOKEN = process.env.DISCORD_TOKEN;
+// Use Render env vars (supports multiple common names)
+const TOKEN =
+    process.env.DISCORD_TOKEN ||
+    process.env.BOT_TOKEN ||
+    process.env.TOKEN;
 
+if (!TOKEN) {
+    console.error("No Discord token found in environment variables (DISCORD_TOKEN / BOT_TOKEN / TOKEN).");
+    process.exit(1);
+}
 
 const client = new Client({
     intents: [
@@ -29,17 +37,27 @@ const client = new Client({
 });
 
 const configPath = path.join(__dirname, "cybershield_config.json");
-let config = fs.existsSync(configPath)
-    ? JSON.parse(fs.readFileSync(configPath, "utf8"))
-    : {};
-
-function saveConfig() {
-    fs.writeFileSync(configPath, JSON.stringify(config, null, 4));
+let config = {};
+try {
+    if (fs.existsSync(configPath)) {
+        config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    }
+} catch (e) {
+    console.error("Failed to read config file:", e.message);
+    config = {};
 }
 
 if (!config.guilds) config.guilds = {};
 if (!config.quarantineData) config.quarantineData = {};
 if (!config.unqRequests) config.unqRequests = {};
+
+function saveConfig() {
+    try {
+        fs.writeFileSync(configPath, JSON.stringify(config, null, 4));
+    } catch (e) {
+        console.error("Failed to write config file:", e.message);
+    }
+}
 
 client.commands = new Collection();
 
@@ -67,7 +85,14 @@ function getGuildConfig(guildId) {
             nukeWindowMs: 15000,
             nukeThreshold: 6,
             lockdown: false,
-            whitelistedDomains: ["discord.com", "discord.gg", "youtube.com", "youtu.be", "twitter.com", "x.com"],
+            whitelistedDomains: [
+                "discord.com",
+                "discord.gg",
+                "youtube.com",
+                "youtu.be",
+                "twitter.com",
+                "x.com"
+            ],
             whitelistedRoles: [],
             whitelistedChannels: []
         };
@@ -80,21 +105,31 @@ function getGuildConfig(guildId) {
    UTIL: ENSURE CHANNEL / ROLE (NO DUPES)
 ============================================================ */
 async function ensureChannel(guild, name, type = ChannelType.GuildText) {
-    let existing = guild.channels.cache.find(c => c.name === name && c.type === type);
-    if (existing) return existing;
-    const created = await guild.channels.create({ name, type }).catch(() => null);
-    return created;
+    try {
+        let existing = guild.channels.cache.find(
+            c => c.name === name && c.type === type
+        );
+        if (existing) return existing;
+        const created = await guild.channels.create({ name, type });
+        return created;
+    } catch {
+        return null;
+    }
 }
 
 async function ensureRole(guild, name, options = {}) {
-    let existing = guild.roles.cache.find(r => r.name === name);
-    if (existing) return existing;
-    const created = await guild.roles.create({
-        name,
-        color: options.color || "#2b2d31",
-        permissions: options.permissions || []
-    }).catch(() => null);
-    return created;
+    try {
+        let existing = guild.roles.cache.find(r => r.name === name);
+        if (existing) return existing;
+        const created = await guild.roles.create({
+            name,
+            color: options.color || "#2b2d31",
+            permissions: options.permissions || []
+        });
+        return created;
+    } catch {
+        return null;
+    }
 }
 
 /* ============================================================
@@ -149,30 +184,39 @@ async function getQuarantineRole(guild) {
 
 async function getUnqRequestChannel(guild) {
     const qRole = await getQuarantineRole(guild);
+    if (!qRole) return null;
+
     const channel = await ensureChannel(guild, "unquarantine-requests", ChannelType.GuildText);
     if (!channel) return null;
 
     const everyone = guild.roles.everyone;
-    const perms = [
+    const overwrites = [
         {
             id: everyone.id,
             deny: [PermissionsBitField.Flags.ViewChannel]
         },
         {
             id: qRole.id,
-            allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages]
+            allow: [
+                PermissionsBitField.Flags.ViewChannel,
+                PermissionsBitField.Flags.SendMessages
+            ]
         }
     ];
 
     const me = guild.members.me;
     if (me) {
-        perms.push({
-            id: me.roles.highest.id,
-            allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ManageMessages]
+        overwrites.push({
+            id: me.id,
+            allow: [
+                PermissionsBitField.Flags.ViewChannel,
+                PermissionsBitField.Flags.SendMessages,
+                PermissionsBitField.Flags.ManageMessages
+            ]
         });
     }
 
-    await channel.permissionOverwrites.set(perms).catch(() => {});
+    await channel.permissionOverwrites.set(overwrites).catch(() => {});
     return channel;
 }
 
@@ -205,6 +249,8 @@ async function quarantineUser(guild, member, reason = "No reason provided") {
     });
 
     const holdChannel = await ensureChannel(guild, "quarantine-hold", ChannelType.GuildText);
+    const unqChan = await getUnqRequestChannel(guild);
+
     if (holdChannel) {
         holdChannel.send({
             content: `${member}`,
@@ -215,7 +261,9 @@ async function quarantineUser(guild, member, reason = "No reason provided") {
                     .setDescription(
                         `You have been quarantined by the staff.\n\nReason: **${reason}**\n\n` +
                         `Your roles have been temporarily removed and will be restored when staff unquarantine you.\n\n` +
-                        `You can request unquarantine in <#${(await getUnqRequestChannel(guild))?.id}>.`
+                        (unqChan
+                            ? `You can request unquarantine in ${unqChan}.`
+                            : `Unquarantine request channel is not available right now.`)
                     )
                     .setTimestamp()
             ]
@@ -262,8 +310,8 @@ async function unquarantineUser(guild, member, staffUser = null, reason = "Unqua
             .setColor("Green")
             .setDescription(
                 `${member} has been unquarantined and their roles have been restored.\n` +
-                (staffUser ? `Approved by: ${staffUser}` : "") +
-                `\nReason: **${reason}**`
+                (staffUser ? `Approved by: ${staffUser}\n` : "") +
+                `Reason: **${reason}**`
             )
             .setTimestamp()
     );
@@ -276,12 +324,18 @@ async function createUnqRequest(interaction, reason) {
     const guild = interaction.guild;
     const member = interaction.member;
     const qRole = await getQuarantineRole(guild);
+    if (!qRole) return safeReply(interaction, { content: "Quarantine role is missing." });
+
     if (!member.roles.cache.has(qRole.id)) {
         return safeReply(interaction, { content: "You are not quarantined." });
     }
 
     const unqChan = await getUnqRequestChannel(guild);
-    if (!unqChan || interaction.channelId !== unqChan.id) {
+    if (!unqChan) {
+        return safeReply(interaction, { content: "Unquarantine request channel is not available. Please contact staff." });
+    }
+
+    if (interaction.channelId !== unqChan.id) {
         return safeReply(interaction, { content: `You can only use this command in ${unqChan}.` });
     }
 
@@ -295,7 +349,11 @@ async function createUnqRequest(interaction, reason) {
     }
 
     const requestId = `${guild.id}-${member.id}-${Date.now()}`;
-    config.unqRequests[member.id] = { guildId: guild.id, requestId, reason: reason || "No reason provided" };
+    config.unqRequests[member.id] = {
+        guildId: guild.id,
+        requestId,
+        reason: reason || "No reason provided"
+    };
     saveConfig();
 
     const embed = new EmbedBuilder()
@@ -358,7 +416,7 @@ client.on("messageDelete", async message => {
 /* ============================================================
    ANTI-SPAM / ANTI-LINK / ANTI-INVITE / ANTI-MASS-MENTION
 ============================================================ */
-const msgBuckets = new Map(); // guildId-userId -> { messages: [], lastReset }
+const msgBuckets = new Map(); // guildId-userId -> { messages: [] }
 
 function getBucket(guildId, userId) {
     const key = `${guildId}-${userId}`;
@@ -383,9 +441,9 @@ client.on("messageCreate", async message => {
     if (!member) return;
 
     const isStaff = member.permissions.has(PermissionsBitField.Flags.ModerateMembers);
+    const content = message.content || "";
 
     // Anti-invite / anti-link
-    const content = message.content || "";
     const hasInvite = inviteRegex.test(content);
     const hasUrl = urlRegex.test(content);
 
@@ -410,7 +468,7 @@ client.on("messageCreate", async message => {
             let allowed = false;
             if (domain) {
                 for (const d of gConf.whitelistedDomains) {
-                    if (domain.endsWith(d)) {
+                    if (domain === d || domain.endsWith(`.${d}`)) {
                         allowed = true;
                         break;
                     }
@@ -505,10 +563,18 @@ async function handlePotentialNuke(guild, executorId, actionType) {
         if (!me) return;
 
         if (me.roles.highest.position > executor.roles.highest.position) {
-            // Remove dangerous perms
             for (const role of executor.roles.cache.values()) {
                 if (role.managed) continue;
-                if (!role.permissions.any(PermissionsBitField.Flags.Administrator | PermissionsBitField.Flags.ManageGuild | PermissionsBitField.Flags.ManageChannels | PermissionsBitField.Flags.ManageRoles | PermissionsBitField.Flags.BanMembers | PermissionsBitField.Flags.KickMembers)) {
+                if (
+                    !role.permissions.any(
+                        PermissionsBitField.Flags.Administrator |
+                        PermissionsBitField.Flags.ManageGuild |
+                        PermissionsBitField.Flags.ManageChannels |
+                        PermissionsBitField.Flags.ManageRoles |
+                        PermissionsBitField.Flags.BanMembers |
+                        PermissionsBitField.Flags.KickMembers
+                    )
+                ) {
                     continue;
                 }
                 const newPerms = role.permissions.remove(
@@ -524,9 +590,6 @@ async function handlePotentialNuke(guild, executorId, actionType) {
 
             await quarantineUser(guild, executor, "Potential nuke behavior detected.");
         }
-
-        const gBucket = getJoinBucket(guild.id);
-        gBucket.length = 0;
 
         await logToShield(
             guild,
@@ -635,7 +698,7 @@ async function removeLockdown(guild) {
 }
 
 /* ============================================================
-   BASIC AUDIT-BASED ANTI-NUKE HOOKS (LIGHT)
+   BASIC AUDIT-BASED ANTI-NUKE HOOKS
 ============================================================ */
 async function trackAudit(guild, typeLabel) {
     try {
@@ -684,6 +747,7 @@ client.on("ready", async () => {
             name: "quarantine",
             description: "Quarantine a member (strip roles and apply quarantine role).",
             default_member_permissions: PermissionsBitField.Flags.ModerateMembers.toString(),
+            dm_permission: false,
             options: [
                 {
                     name: "user",
@@ -703,6 +767,7 @@ client.on("ready", async () => {
             name: "unquarantine",
             description: "Unquarantine a member and restore their roles.",
             default_member_permissions: PermissionsBitField.Flags.ModerateMembers.toString(),
+            dm_permission: false,
             options: [
                 {
                     name: "user",
@@ -721,6 +786,7 @@ client.on("ready", async () => {
         {
             name: "request-unquarantine",
             description: "Request to be unquarantined (quarantined users only).",
+            dm_permission: false,
             options: [
                 {
                     name: "reason",
@@ -734,6 +800,7 @@ client.on("ready", async () => {
             name: "lockdown",
             description: "Enable server lockdown.",
             default_member_permissions: PermissionsBitField.Flags.ManageGuild.toString(),
+            dm_permission: false,
             options: [
                 {
                     name: "reason",
@@ -746,12 +813,14 @@ client.on("ready", async () => {
         {
             name: "unlock",
             description: "Disable server lockdown.",
-            default_member_permissions: PermissionsBitField.Flags.ManageGuild.toString()
+            default_member_permissions: PermissionsBitField.Flags.ManageGuild.toString(),
+            dm_permission: false
         },
         {
             name: "timeout",
             description: "Timeout a member.",
             default_member_permissions: PermissionsBitField.Flags.ModerateMembers.toString(),
+            dm_permission: false,
             options: [
                 {
                     name: "user",
@@ -777,6 +846,7 @@ client.on("ready", async () => {
             name: "kick",
             description: "Kick a member.",
             default_member_permissions: PermissionsBitField.Flags.KickMembers.toString(),
+            dm_permission: false,
             options: [
                 {
                     name: "user",
@@ -796,6 +866,7 @@ client.on("ready", async () => {
             name: "ban",
             description: "Ban a member.",
             default_member_permissions: PermissionsBitField.Flags.BanMembers.toString(),
+            dm_permission: false,
             options: [
                 {
                     name: "user",
@@ -815,6 +886,7 @@ client.on("ready", async () => {
             name: "unban",
             description: "Unban a user by ID.",
             default_member_permissions: PermissionsBitField.Flags.BanMembers.toString(),
+            dm_permission: false,
             options: [
                 {
                     name: "userid",
@@ -854,11 +926,9 @@ client.on("interactionCreate", async interaction => {
 • Anti-invite & anti-link (with whitelists)
 • Anti-webhook abuse
 • Anti-mass-mention
-• Anti-bot add (via logging + staff review)
 • Lockdown mode
 • Full moderation commands
 • Ghost ping detection (non-bot only)
-• Permission abuse alerts (via anti-nuke hooks)
 • Account age checks
 • Full logging suite
 
@@ -947,9 +1017,10 @@ client.on("interactionCreate", async interaction => {
 
             const duration = minutes * 60 * 1000;
             await interaction.deferReply({ flags: 64 }).catch(() => {});
-            await target.timeout(duration, reason).catch(() => {
+            const res = await target.timeout(duration, reason).catch(() => null);
+            if (!res) {
                 return safeEdit(interaction, { content: "Failed to timeout that user. Check my permissions." });
-            });
+            }
 
             await logToShield(
                 interaction.guild,
@@ -977,9 +1048,10 @@ client.on("interactionCreate", async interaction => {
             }
 
             await interaction.deferReply({ flags: 64 }).catch(() => {});
-            await target.kick(reason).catch(() => {
+            const res = await target.kick(reason).catch(() => null);
+            if (!res) {
                 return safeEdit(interaction, { content: "Failed to kick that user. Check my permissions." });
-            });
+            }
 
             await logToShield(
                 interaction.guild,
@@ -1004,9 +1076,10 @@ client.on("interactionCreate", async interaction => {
             }
 
             await interaction.deferReply({ flags: 64 }).catch(() => {});
-            await target.ban({ reason }).catch(() => {
+            const res = await target.ban({ reason }).catch(() => null);
+            if (!res) {
                 return safeEdit(interaction, { content: "Failed to ban that user. Check my permissions." });
-            });
+            }
 
             await logToShield(
                 interaction.guild,
@@ -1028,9 +1101,10 @@ client.on("interactionCreate", async interaction => {
             }
 
             await interaction.deferReply({ flags: 64 }).catch(() => {});
-            await interaction.guild.bans.remove(userId).catch(() => {
+            const res = await interaction.guild.bans.remove(userId).catch(() => null);
+            if (!res) {
                 return safeEdit(interaction, { content: "Failed to unban that user. Check the ID and my permissions." });
-            });
+            }
 
             await logToShield(
                 interaction.guild,
