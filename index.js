@@ -1150,12 +1150,10 @@ app.get("/", (req, res) => {
   res.send("CyberShield is running.");
 });
 
-// IMPORTANT: Render requires you to listen on process.env.PORT
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Web server running on port ${PORT}`);
 });
-
 
 
 if (!TOKEN) {
