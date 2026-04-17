@@ -1141,5 +1141,22 @@ client.on("interactionCreate", async interaction => {
     }
 });
 
-// ===== LOGIN (single, clean) =====
-client.login(TOKEN);
+// ===== LOGIN (single, clean, with clear logging) =====
+const TOKEN = process.env.DISCORD_TOKEN;
+
+if (!TOKEN) {
+    console.error("DISCORD_TOKEN is missing. Set it in Render → Environment.");
+    process.exit(1);
+}
+
+client.login(TOKEN)
+    .then(() => {
+        console.log("CyberShield logged in successfully.");
+    })
+    .catch(err => {
+        console.error("Failed to login. This is almost always a BAD TOKEN issue.");
+        console.error("Error code:", err.code || "no code");
+        console.error(err);
+        process.exit(1);
+    });
+
