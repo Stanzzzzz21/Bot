@@ -14,7 +14,8 @@ const {
 const fs = require("fs");
 const path = require("path");
 
-const TOKEN = "YOUR_BOT_TOKEN_HERE";
+const TOKEN = process.env.DISCORD_TOKEN;
+
 
 const client = new Client({
     intents: [
